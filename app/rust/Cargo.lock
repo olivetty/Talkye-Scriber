@@ -2917,6 +2917,7 @@ name = "rust_lib_talkye_app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "dotenvy",
  "flutter_rust_bridge",
  "talkye-core",
  "tokio",

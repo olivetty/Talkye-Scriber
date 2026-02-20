@@ -55,20 +55,20 @@ class _HomePageState extends State<HomePage> {
   final ScrollController _scrollController = ScrollController();
   String? _error;
 
-  // Default config — will come from settings later
+  // Default config — empty values fall back to .env (dev mode)
   final _config = FfiEngineConfig(
-    sttBackend: 'parakeet',
-    sttLanguage: 'ro',
-    translateFrom: 'Romanian',
-    translateTo: 'English',
-    voicePath: 'voices/oliver.safetensors',
-    ttsSpeed: 1.0,
-    groqApiKey: '',  // loaded from .env in dev
+    sttBackend: '',
+    sttLanguage: '',
+    translateFrom: '',
+    translateTo: '',
+    voicePath: '',
+    ttsSpeed: 0,
+    groqApiKey: '',
     deepgramApiKey: '',
     hfToken: '',
-    parakeetModelDir: 'models/parakeet-tdt',
-    vadModelPath: 'models/silero_vad.onnx',
-    audioOutput: 'talkye_combined',
+    parakeetModelDir: '',
+    vadModelPath: '',
+    audioOutput: '',
   );
 
   @override
