@@ -79,6 +79,7 @@ impl Pipeline {
         let tts_config = crate::config::TtsConfig {
             voice: self.config.tts.voice.clone(),
             speed: self.config.tts.speed,
+            output_device: self.config.tts.output_device.clone(),
         };
         std::thread::spawn(move || {
             tracing::info!("[TTS] thread started");
@@ -86,7 +87,7 @@ impl Pipeline {
                 Ok(t) => t,
                 Err(e) => { tracing::error!("[TTS] init failed: {e:#}"); return; }
             };
-            let playback = match AudioPlayback::new() {
+            let mut playback = match AudioPlayback::new(tts_config.output_device.as_deref()) {
                 Ok(p) => p,
                 Err(e) => { tracing::error!("[TTS] playback init failed: {e:#}"); return; }
             };

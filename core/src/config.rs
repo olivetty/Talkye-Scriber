@@ -33,6 +33,7 @@ pub struct TranslateConfig {
 pub struct TtsConfig {
     pub voice: String,
     pub speed: f32,
+    pub output_device: Option<String>,
 }
 
 pub struct AudioConfig {
@@ -82,6 +83,7 @@ impl Config {
             tts: TtsConfig {
                 voice,
                 speed: env_parse("POCKET_SPEED", 1.0),
+                output_device: env_optional_single("AUDIO_OUTPUT"),
             },
             audio: AudioConfig {
                 source: env_optional_single("AUDIO_SOURCE"),

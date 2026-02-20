@@ -63,15 +63,50 @@ Every arrow is a `tokio::mpsc` channel. Components don't know about each other �
 
 ```
 OUTGOING (you → them):
-  Real Mic → STT → Translate(RO→EN) → TTS(your voice) → Virtual Mic → Zoom sends
+  Real Mic → STT → Translate(RO→EN) → TTS(your voice) → Virtual Mic → Meet sends
 
 INCOMING (them → you):
-  Zoom → Virtual Speaker → STT → Translate(EN→RO) → TTS(default) → Real Speakers
+  Meet → Virtual Speaker → STT → Translate(EN→RO) → TTS(default) → Real Speakers
 ```
 
 Two independent pipeline instances. Zero feedback loop:
-- Outgoing TTS → virtual mic only (Zoom hears, you don't)
-- Incoming TTS → real speakers only (you hear, Zoom doesn't)
+- Outgoing TTS → virtual mic only (Meet hears, you don't)
+- Incoming TTS → real speakers only (you hear, Meet doesn't)
+
+## Virtual Audio Routing (Google Meet)
+
+Current working setup using PulseAudio/PipeWire modules:
+
+```
+TTS (cpal) ──→ talkye_combined (combine-sink)
+                  ├──→ Real Speakers (you hear directly)
+                  └──→ talkye_out (null-sink)
+                          └──→ talkye_out.monitor
+                                  └──→ talkye_mic (virtual-source)
+                                          └──→ Google Meet microphone
+```
+
+Setup commands (ephemeral — lost on reboot):
+```bash
+# 1. Null sink for Meet to read from
+pactl load-module module-null-sink sink_name=talkye_out
+
+# 2. Combined sink: sends to both your speakers AND talkye_out
+pactl load-module module-combine-sink sink_name=talkye_combined \
+  slaves=<your_speaker_sink>,talkye_out
+
+# 3. Virtual mic source (browsers see this as a microphone)
+pactl load-module module-virtual-source source_name=talkye_mic \
+  master=talkye_out.monitor source_properties=device.description="Talkye_Mic"
+
+# Find your speaker sink name:
+pactl list short sinks
+```
+
+In Google Meet: Settings → Audio → Microphone → "Talkye_Mic".
+
+Playback uses pre-buffering (150ms) to prevent underruns between TTS chunks.
+Routing done via `pactl move-sink-input` after first cpal stream starts.
 
 ## Phase Roadmap
 
