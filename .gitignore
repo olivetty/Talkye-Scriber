@@ -1,0 +1,37 @@
+# Rust
+/core/target/
+**/*.rs.bk
+
+# Flutter
+/app/.dart_tool/
+/app/.packages
+/app/build/
+/app/.flutter-plugins
+/app/.flutter-plugins-dependencies
+
+# Python (prototype)
+prototype/venv/
+prototype/__pycache__/
+*.pyc
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Models (large files)
+prototype/models/*.onnx
+!prototype/models/.gitkeep
+
+# Voice samples (keep originals)
+# prototype/voices/ is tracked

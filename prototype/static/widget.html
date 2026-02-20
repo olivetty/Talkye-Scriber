@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dictate — Voice Input</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0a0a0a;
+            color: #e0e0e0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+        }
+        h1 { font-size: 1.5rem; margin-bottom: 0.5rem; color: #fff; }
+        .subtitle { color: #888; margin-bottom: 2rem; font-size: 0.9rem; }
+
+        .container {
+            width: 100%;
+            max-width: 600px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1.5rem;
+        }
+
+        /* Mic button */
+        .mic-btn {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            border: 2px solid #333;
+            background: #1a1a1a;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        .mic-btn:hover { border-color: #555; background: #222; }
+        .mic-btn.recording {
+            border-color: #ef4444;
+            background: #1c0a0a;
+            animation: pulse 1.5s infinite;
+        }
+        .mic-btn.processing {
+            border-color: #f59e0b;
+            background: #1a1500;
+        }
+        .mic-btn svg { width: 32px; height: 32px; fill: #888; }
+        .mic-btn.recording svg { fill: #ef4444; }
+        .mic-btn.processing svg { fill: #f59e0b; }
+
+        @keyframes pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.3); }
+            50% { box-shadow: 0 0 0 15px rgba(239,68,68,0); }
+        }
+
+        .status { color: #888; font-size: 0.85rem; min-height: 1.2em; }
+
+        /* Output */
+        .output {
+            width: 100%;
+            min-height: 120px;
+            background: #111;
+            border: 1px solid #222;
+            border-radius: 8px;
+            padding: 1rem;
+            font-size: 1rem;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .output .original {
+            color: #666;
+            font-size: 0.85rem;
+            border-top: 1px solid #222;
+            margin-top: 0.5rem;
+            padding-top: 0.5rem;
+        }
+
+        /* Settings */
+        .settings {
+            width: 100%;
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        .settings select, .settings label {
+            background: #1a1a1a;
+            border: 1px solid #333;
+            color: #ccc;
+            padding: 0.4rem 0.6rem;
+            border-radius: 4px;
+            font-size: 0.8rem;
+        }
+        .settings label { display: flex; align-items: center; gap: 0.3rem; cursor: pointer; }
+        .settings input[type="checkbox"] { accent-color: #666; }
+    </style>
+</head>
+<body>
+    <h1>Dictate</h1>
+    <p class="subtitle">Hold the button and speak</p>
+
+    <div class="container">
+        <div class="settings">
+            <select id="language" aria-label="Language">
+                <option value="auto">Auto-detect</option>
+                <option value="ro">Romanian</option>
+                <option value="en">English</option>
+            </select>
+            <label><input type="checkbox" id="cleanup"> LLM Cleanup</label>
+            <label><input type="checkbox" id="translate"> Translate</label>
+            <select id="translateTo" aria-label="Translate to" disabled>
+                <option value="en">→ English</option>
+                <option value="ro">→ Romanian</option>
+                <option value="de">→ German</option>
+                <option value="fr">→ French</option>
+                <option value="es">→ Spanish</option>
+            </select>
+        </div>
+
+        <button class="mic-btn" id="micBtn" aria-label="Hold to record">
+            <svg viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm-1-9c0-.55.45-1 1-1s1 .45 1 1v6c0 .55-.45 1-1 1s-1-.45-1-1V5zm6 6c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>
+        </button>
+        <div class="status" id="status">Ready</div>
+
+        <div class="output" id="output" role="log" aria-live="polite"></div>
+    </div>
+
+    <script>
+    const micBtn = document.getElementById('micBtn');
+    const status = document.getElementById('status');
+    const output = document.getElementById('output');
+    const langSelect = document.getElementById('language');
+    const cleanupCheck = document.getElementById('cleanup');
+    const translateCheck = document.getElementById('translate');
+    const translateTo = document.getElementById('translateTo');
+
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let isRecording = false;
+
+    translateCheck.addEventListener('change', () => {
+        translateTo.disabled = !translateCheck.checked;
+    });
+
+    // Request mic permission on page load
+    async function initMic() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            stream.getTracks().forEach(t => t.stop());
+        } catch (e) {
+            status.textContent = 'Microphone access denied';
+        }
+    }
+    initMic();
+
+    async function startRecording() {
+        if (isRecording) return;
+        isRecording = true;
+        audioChunks = [];
+        micBtn.classList.add('recording');
+        status.textContent = 'Recording...';
+
+        const stream = await navigator.mediaDevices.getUserMedia({
+            audio: { sampleRate: 48000, channelCount: 1, echoCancellation: true, noiseSuppression: true }
+        });
+        mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+        mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunks.push(e.data); };
+        mediaRecorder.start();
+    }
+
+    async function stopRecording() {
+        if (!isRecording || !mediaRecorder) return;
+        isRecording = false;
+        micBtn.classList.remove('recording');
+        micBtn.classList.add('processing');
+        status.textContent = 'Processing...';
+
+        mediaRecorder.stop();
+        mediaRecorder.stream.getTracks().forEach(t => t.stop());
+
+        await new Promise(resolve => { mediaRecorder.onstop = resolve; });
+        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+
+        if (audioBlob.size < 1000) {
+            status.textContent = 'Too short';
+            micBtn.classList.remove('processing');
+            return;
+        }
+
+        // Use WebSocket for streaming, fallback to REST
+        const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${wsProto}//${location.host}/v1/stream`;
+
+        try {
+            const ws = new WebSocket(wsUrl);
+            output.textContent = '';
+            let originalText = '';
+
+            ws.onopen = () => {
+                ws.send(JSON.stringify({
+                    language: langSelect.value,
+                    cleanup: cleanupCheck.checked,
+                    translate_to: translateCheck.checked ? translateTo.value : null,
+                    format: 'webm',
+                }));
+                audioBlob.arrayBuffer().then(buf => ws.send(buf));
+            };
+
+            ws.onmessage = (e) => {
+                const msg = JSON.parse(e.data);
+                if (msg.type === 'transcription') {
+                    originalText = msg.text;
+                    if (!cleanupCheck.checked && !translateCheck.checked) {
+                        output.textContent = msg.text;
+                    }
+                    status.textContent = `Transcribed (${msg.language}, ${msg.duration}s)`;
+                } else if (msg.type === 'token') {
+                    output.textContent += msg.text;
+                } else if (msg.type === 'done') {
+                    if (originalText && originalText !== msg.text && msg.text) {
+                        const orig = document.createElement('div');
+                        orig.className = 'original';
+                        orig.textContent = 'Original: ' + originalText;
+                        output.appendChild(orig);
+                    }
+                    micBtn.classList.remove('processing');
+                    status.textContent = 'Ready';
+                } else if (msg.type === 'error') {
+                    status.textContent = 'Error: ' + msg.message;
+                    micBtn.classList.remove('processing');
+                }
+            };
+
+            ws.onerror = () => { fallbackREST(audioBlob); };
+        } catch (e) {
+            fallbackREST(audioBlob);
+        }
+    }
+
+    async function fallbackREST(audioBlob) {
+        try {
+            const form = new FormData();
+            form.append('file', audioBlob, 'recording.webm');
+            form.append('language', langSelect.value === 'auto' ? '' : langSelect.value);
+            form.append('cleanup', cleanupCheck.checked);
+            if (translateCheck.checked) form.append('translate_to', translateTo.value);
+
+            const res = await fetch('/v1/transcribe', { method: 'POST', body: form });
+            const data = await res.json();
+            output.textContent = data.text || 'No speech detected';
+            if (data.original && data.original !== data.text) {
+                const orig = document.createElement('div');
+                orig.className = 'original';
+                orig.textContent = 'Original: ' + data.original;
+                output.appendChild(orig);
+            }
+        } catch (e) {
+            status.textContent = 'Error: ' + e.message;
+        }
+        micBtn.classList.remove('processing');
+        status.textContent = 'Ready';
+    }
+
+    // Hold to record (mouse + touch)
+    micBtn.addEventListener('mousedown', startRecording);
+    micBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startRecording(); });
+    document.addEventListener('mouseup', stopRecording);
+    document.addEventListener('touchend', stopRecording);
+
+    // Keyboard: hold Space to record
+    document.addEventListener('keydown', (e) => {
+        if (e.code === 'Space' && !e.repeat && document.activeElement === document.body) {
+            e.preventDefault();
+            startRecording();
+        }
+    });
+    document.addEventListener('keyup', (e) => {
+        if (e.code === 'Space') stopRecording();
+    });
+    </script>
+</body>
+</html>
