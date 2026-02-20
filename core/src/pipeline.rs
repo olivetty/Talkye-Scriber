@@ -128,9 +128,14 @@ impl Pipeline {
             }
 
             let event = if !accum.has_words() {
-                match stt_rx.recv().await {
-                    Some(e) => e,
-                    None => break,
+                // Timeout so we can check stop flag periodically
+                match tokio::time::timeout(
+                    tokio::time::Duration::from_millis(500),
+                    stt_rx.recv(),
+                ).await {
+                    Ok(Some(e)) => e,
+                    Ok(None) => break,       // channel closed
+                    Err(_) => continue,      // timeout → re-check stop flag
                 }
             } else {
                 match tokio::time::timeout(flush_timeout, stt_rx.recv()).await {

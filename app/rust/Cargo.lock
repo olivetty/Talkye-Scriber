@@ -2921,6 +2921,8 @@ dependencies = [
  "flutter_rust_bridge",
  "talkye-core",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

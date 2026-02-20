@@ -12,6 +12,8 @@ talkye-core = { path = "../../core" }
 anyhow = "1"
 tokio = { version = "1", features = ["full"] }
 dotenvy = "0.15"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
