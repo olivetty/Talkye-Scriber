@@ -8,23 +8,31 @@
 use anyhow::Result;
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::{mpsc, Semaphore};
 
 use crate::accumulator::{self, Accumulator};
 use crate::audio::capture::AudioCapture;
 use crate::audio::playback::AudioPlayback;
 use crate::config::Config;
+use crate::engine::EngineEvent;
 use crate::stt::{SttEvent, run_stt};
 use crate::translate::Translator;
 use crate::tts::TtsEngine;
 
 pub struct Pipeline {
     config: Config,
+    event_tx: mpsc::Sender<EngineEvent>,
+    running: Arc<AtomicBool>,
 }
 
 impl Pipeline {
-    pub fn new(config: Config) -> Self {
-        Self { config }
+    pub fn new(
+        config: Config,
+        event_tx: mpsc::Sender<EngineEvent>,
+        running: Arc<AtomicBool>,
+    ) -> Self {
+        Self { config, event_tx, running }
     }
 
     pub async fn run(&self) -> Result<()> {
@@ -67,10 +75,11 @@ impl Pipeline {
         let translator = Arc::new(Translator::new(&self.config.translate));
         let semaphore = Arc::new(Semaphore::new(3));
         let tts_tx_ordered = tts_tx.clone();
+        let evt_translate = self.event_tx.clone();
 
         tokio::spawn(async move {
             tracing::info!("[TRANSLATE] task started");
-            Self::ordered_translator(translate_rx, tts_tx_ordered, translator, semaphore).await;
+            Self::ordered_translator(translate_rx, tts_tx_ordered, translator, semaphore, evt_translate).await;
         });
 
         // ── TTS playback (blocking thread) ──
@@ -112,6 +121,12 @@ impl Pipeline {
         tracing::info!("[ACCUM] loop started, waiting for STT events");
 
         loop {
+            // Check stop signal
+            if !self.running.load(Ordering::Relaxed) {
+                tracing::info!("[ACCUM] stop signal received");
+                break;
+            }
+
             let event = if !accum.has_words() {
                 match stt_rx.recv().await {
                     Some(e) => e,
@@ -228,8 +243,9 @@ impl Pipeline {
         tx: mpsc::Sender<String>,
         translator: Arc<Translator>,
         semaphore: Arc<Semaphore>,
+        event_tx: mpsc::Sender<EngineEvent>,
     ) {
-        let pending: Arc<tokio::sync::Mutex<BTreeMap<u64, String>>> =
+        let pending: Arc<tokio::sync::Mutex<BTreeMap<u64, (String, String)>>> =
             Arc::new(tokio::sync::Mutex::new(BTreeMap::new()));
         let next_seq = Arc::new(tokio::sync::Mutex::new(0u64));
 
@@ -239,6 +255,7 @@ impl Pipeline {
             let pending = pending.clone();
             let next_seq = next_seq.clone();
             let tx = tx.clone();
+            let event_tx = event_tx.clone();
 
             tokio::spawn(async move {
                 let _permit = semaphore.acquire().await.unwrap();
@@ -249,16 +266,24 @@ impl Pipeline {
                         tracing::info!("[TRANSLATE] seq={seq} done in {ms}ms: \"{translated}\"");
 
                         let mut map = pending.lock().await;
-                        map.insert(seq, translated);
+                        map.insert(seq, (text.clone(), translated));
 
                         let mut next = next_seq.lock().await;
-                        while let Some(result) = map.remove(&*next) {
+                        while let Some((original, result)) = map.remove(&*next) {
+                            // Emit transcript event to UI
+                            let _ = event_tx.send(EngineEvent::Transcript {
+                                original,
+                                translated: result.clone(),
+                            }).await;
                             let _ = tx.send(result).await;
                             *next += 1;
                         }
                     }
                     Err(e) => {
                         tracing::error!("[TRANSLATE] seq={seq} error: {e:#}");
+                        let _ = event_tx.send(EngineEvent::Error {
+                            message: format!("Translation error: {e:#}"),
+                        }).await;
                         let mut next = next_seq.lock().await;
                         if *next == seq { *next += 1; }
                     }

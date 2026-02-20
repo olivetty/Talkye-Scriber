@@ -6,6 +6,7 @@
 // Static analysis wrongly picks the IO variant, thus ignore this
 // ignore_for_file: argument_type_not_assignable
 
+import 'api/engine.dart';
 import 'api/simple.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -27,7 +28,36 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RustStreamSink<String> dco_decode_StreamSink_String_Sse(dynamic raw);
 
   @protected
+  RustStreamSink<FfiEngineEvent> dco_decode_StreamSink_ffi_engine_event_Sse(
+    dynamic raw,
+  );
+
+  @protected
   String dco_decode_String(dynamic raw);
+
+  @protected
+  bool dco_decode_bool(dynamic raw);
+
+  @protected
+  FfiEngineConfig dco_decode_box_autoadd_ffi_engine_config(dynamic raw);
+
+  @protected
+  double dco_decode_f_32(dynamic raw);
+
+  @protected
+  FfiAudioDevice dco_decode_ffi_audio_device(dynamic raw);
+
+  @protected
+  FfiEngineConfig dco_decode_ffi_engine_config(dynamic raw);
+
+  @protected
+  FfiEngineEvent dco_decode_ffi_engine_event(dynamic raw);
+
+  @protected
+  FfiModelStatus dco_decode_ffi_model_status(dynamic raw);
+
+  @protected
+  List<FfiAudioDevice> dco_decode_list_ffi_audio_device(dynamic raw);
 
   @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
@@ -50,7 +80,40 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  RustStreamSink<FfiEngineEvent> sse_decode_StreamSink_ffi_engine_event_Sse(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   String sse_decode_String(SseDeserializer deserializer);
+
+  @protected
+  bool sse_decode_bool(SseDeserializer deserializer);
+
+  @protected
+  FfiEngineConfig sse_decode_box_autoadd_ffi_engine_config(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  double sse_decode_f_32(SseDeserializer deserializer);
+
+  @protected
+  FfiAudioDevice sse_decode_ffi_audio_device(SseDeserializer deserializer);
+
+  @protected
+  FfiEngineConfig sse_decode_ffi_engine_config(SseDeserializer deserializer);
+
+  @protected
+  FfiEngineEvent sse_decode_ffi_engine_event(SseDeserializer deserializer);
+
+  @protected
+  FfiModelStatus sse_decode_ffi_model_status(SseDeserializer deserializer);
+
+  @protected
+  List<FfiAudioDevice> sse_decode_list_ffi_audio_device(
+    SseDeserializer deserializer,
+  );
 
   @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
@@ -68,9 +131,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   int sse_decode_i_32(SseDeserializer deserializer);
 
   @protected
-  bool sse_decode_bool(SseDeserializer deserializer);
-
-  @protected
   void sse_encode_AnyhowException(
     AnyhowException self,
     SseSerializer serializer,
@@ -83,7 +143,55 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_StreamSink_ffi_engine_event_Sse(
+    RustStreamSink<FfiEngineEvent> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_String(String self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bool(bool self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_ffi_engine_config(
+    FfiEngineConfig self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_f_32(double self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_ffi_audio_device(
+    FfiAudioDevice self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_ffi_engine_config(
+    FfiEngineConfig self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_ffi_engine_event(
+    FfiEngineEvent self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_ffi_model_status(
+    FfiModelStatus self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_ffi_audio_device(
+    List<FfiAudioDevice> self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_list_prim_u_8_strict(
@@ -102,9 +210,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_i_32(int self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_bool(bool self, SseSerializer serializer);
 }
 
 // Section: wire_class

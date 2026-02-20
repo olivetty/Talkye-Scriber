@@ -3,6 +3,7 @@
 
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
+import 'api/engine.dart';
 import 'api/simple.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -66,7 +67,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.11.1';
 
   @override
-  int get rustContentHash => 412983345;
+  int get rustContentHash => -619270797;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -77,11 +78,29 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
 }
 
 abstract class RustLibApi extends BaseApi {
+  FfiModelStatus crateApiEngineCheckModels({
+    required String sttModelDir,
+    required String vadModelPath,
+    required String voicePath,
+  });
+
   String crateApiSimpleEngineVersion();
 
   String crateApiSimpleGreet({required String name});
 
   Future<void> crateApiSimpleInitApp();
+
+  bool crateApiEngineIsEngineRunning();
+
+  List<FfiAudioDevice> crateApiEngineListInputDevices();
+
+  List<FfiAudioDevice> crateApiEngineListOutputDevices();
+
+  Stream<FfiEngineEvent> crateApiEngineStartEngine({
+    required FfiEngineConfig config,
+  });
+
+  void crateApiEngineStopEngine();
 
   Future<String> crateApiSimpleTestAsync({required int delayMs});
 
@@ -100,12 +119,43 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   });
 
   @override
+  FfiModelStatus crateApiEngineCheckModels({
+    required String sttModelDir,
+    required String vadModelPath,
+    required String voicePath,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_String(sttModelDir, serializer);
+          sse_encode_String(vadModelPath, serializer);
+          sse_encode_String(voicePath, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 1)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_ffi_model_status,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiEngineCheckModelsConstMeta,
+        argValues: [sttModelDir, vadModelPath, voicePath],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiEngineCheckModelsConstMeta => const TaskConstMeta(
+    debugName: "check_models",
+    argNames: ["sttModelDir", "vadModelPath", "voicePath"],
+  );
+
+  @override
   String crateApiSimpleEngineVersion() {
     return handler.executeSync(
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 1)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 2)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
@@ -128,7 +178,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(name, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 2)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 3)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
@@ -153,7 +203,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 3,
+            funcId: 4,
             port: port_,
           );
         },
@@ -172,6 +222,131 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "init_app", argNames: []);
 
   @override
+  bool crateApiEngineIsEngineRunning() {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 5)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiEngineIsEngineRunningConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiEngineIsEngineRunningConstMeta =>
+      const TaskConstMeta(debugName: "is_engine_running", argNames: []);
+
+  @override
+  List<FfiAudioDevice> crateApiEngineListInputDevices() {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 6)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_ffi_audio_device,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiEngineListInputDevicesConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiEngineListInputDevicesConstMeta =>
+      const TaskConstMeta(debugName: "list_input_devices", argNames: []);
+
+  @override
+  List<FfiAudioDevice> crateApiEngineListOutputDevices() {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 7)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_ffi_audio_device,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiEngineListOutputDevicesConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiEngineListOutputDevicesConstMeta =>
+      const TaskConstMeta(debugName: "list_output_devices", argNames: []);
+
+  @override
+  Stream<FfiEngineEvent> crateApiEngineStartEngine({
+    required FfiEngineConfig config,
+  }) {
+    final sink = RustStreamSink<FfiEngineEvent>();
+    unawaited(
+      handler.executeNormal(
+        NormalTask(
+          callFfi: (port_) {
+            final serializer = SseSerializer(generalizedFrbRustBinding);
+            sse_encode_box_autoadd_ffi_engine_config(config, serializer);
+            sse_encode_StreamSink_ffi_engine_event_Sse(sink, serializer);
+            pdeCallFfi(
+              generalizedFrbRustBinding,
+              serializer,
+              funcId: 8,
+              port: port_,
+            );
+          },
+          codec: SseCodec(
+            decodeSuccessData: sse_decode_unit,
+            decodeErrorData: null,
+          ),
+          constMeta: kCrateApiEngineStartEngineConstMeta,
+          argValues: [config, sink],
+          apiImpl: this,
+        ),
+      ),
+    );
+    return sink.stream;
+  }
+
+  TaskConstMeta get kCrateApiEngineStartEngineConstMeta => const TaskConstMeta(
+    debugName: "start_engine",
+    argNames: ["config", "sink"],
+  );
+
+  @override
+  void crateApiEngineStopEngine() {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiEngineStopEngineConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiEngineStopEngineConstMeta =>
+      const TaskConstMeta(debugName: "stop_engine", argNames: []);
+
+  @override
   Future<String> crateApiSimpleTestAsync({required int delayMs}) {
     return handler.executeNormal(
       NormalTask(
@@ -181,7 +356,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 4,
+            funcId: 10,
             port: port_,
           );
         },
@@ -216,7 +391,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 5,
+              funcId: 11,
               port: port_,
             );
           },
@@ -251,9 +426,110 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  RustStreamSink<FfiEngineEvent> dco_decode_StreamSink_ffi_engine_event_Sse(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    throw UnimplementedError();
+  }
+
+  @protected
   String dco_decode_String(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as String;
+  }
+
+  @protected
+  bool dco_decode_bool(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as bool;
+  }
+
+  @protected
+  FfiEngineConfig dco_decode_box_autoadd_ffi_engine_config(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_ffi_engine_config(raw);
+  }
+
+  @protected
+  double dco_decode_f_32(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as double;
+  }
+
+  @protected
+  FfiAudioDevice dco_decode_ffi_audio_device(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return FfiAudioDevice(
+      name: dco_decode_String(arr[0]),
+      isDefault: dco_decode_bool(arr[1]),
+      isInput: dco_decode_bool(arr[2]),
+    );
+  }
+
+  @protected
+  FfiEngineConfig dco_decode_ffi_engine_config(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 12)
+      throw Exception('unexpected arr length: expect 12 but see ${arr.length}');
+    return FfiEngineConfig(
+      sttBackend: dco_decode_String(arr[0]),
+      sttLanguage: dco_decode_String(arr[1]),
+      translateFrom: dco_decode_String(arr[2]),
+      translateTo: dco_decode_String(arr[3]),
+      voicePath: dco_decode_String(arr[4]),
+      ttsSpeed: dco_decode_f_32(arr[5]),
+      groqApiKey: dco_decode_String(arr[6]),
+      deepgramApiKey: dco_decode_String(arr[7]),
+      hfToken: dco_decode_String(arr[8]),
+      parakeetModelDir: dco_decode_String(arr[9]),
+      vadModelPath: dco_decode_String(arr[10]),
+      audioOutput: dco_decode_String(arr[11]),
+    );
+  }
+
+  @protected
+  FfiEngineEvent dco_decode_ffi_engine_event(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    switch (raw[0]) {
+      case 0:
+        return FfiEngineEvent_StatusChanged(status: dco_decode_String(raw[1]));
+      case 1:
+        return FfiEngineEvent_Transcript(
+          original: dco_decode_String(raw[1]),
+          translated: dco_decode_String(raw[2]),
+        );
+      case 2:
+        return FfiEngineEvent_Error(message: dco_decode_String(raw[1]));
+      default:
+        throw Exception("unreachable");
+    }
+  }
+
+  @protected
+  FfiModelStatus dco_decode_ffi_model_status(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    return FfiModelStatus(
+      sttReady: dco_decode_bool(arr[0]),
+      sttPath: dco_decode_String(arr[1]),
+      vadReady: dco_decode_bool(arr[2]),
+      vadPath: dco_decode_String(arr[3]),
+      voiceReady: dco_decode_bool(arr[4]),
+      voicePath: dco_decode_String(arr[5]),
+    );
+  }
+
+  @protected
+  List<FfiAudioDevice> dco_decode_list_ffi_audio_device(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_ffi_audio_device).toList();
   }
 
   @protected
@@ -296,10 +572,139 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  RustStreamSink<FfiEngineEvent> sse_decode_StreamSink_ffi_engine_event_Sse(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    throw UnimplementedError('Unreachable ()');
+  }
+
+  @protected
   String sse_decode_String(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_list_prim_u_8_strict(deserializer);
     return utf8.decoder.convert(inner);
+  }
+
+  @protected
+  bool sse_decode_bool(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getUint8() != 0;
+  }
+
+  @protected
+  FfiEngineConfig sse_decode_box_autoadd_ffi_engine_config(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_ffi_engine_config(deserializer));
+  }
+
+  @protected
+  double sse_decode_f_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getFloat32();
+  }
+
+  @protected
+  FfiAudioDevice sse_decode_ffi_audio_device(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_name = sse_decode_String(deserializer);
+    var var_isDefault = sse_decode_bool(deserializer);
+    var var_isInput = sse_decode_bool(deserializer);
+    return FfiAudioDevice(
+      name: var_name,
+      isDefault: var_isDefault,
+      isInput: var_isInput,
+    );
+  }
+
+  @protected
+  FfiEngineConfig sse_decode_ffi_engine_config(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_sttBackend = sse_decode_String(deserializer);
+    var var_sttLanguage = sse_decode_String(deserializer);
+    var var_translateFrom = sse_decode_String(deserializer);
+    var var_translateTo = sse_decode_String(deserializer);
+    var var_voicePath = sse_decode_String(deserializer);
+    var var_ttsSpeed = sse_decode_f_32(deserializer);
+    var var_groqApiKey = sse_decode_String(deserializer);
+    var var_deepgramApiKey = sse_decode_String(deserializer);
+    var var_hfToken = sse_decode_String(deserializer);
+    var var_parakeetModelDir = sse_decode_String(deserializer);
+    var var_vadModelPath = sse_decode_String(deserializer);
+    var var_audioOutput = sse_decode_String(deserializer);
+    return FfiEngineConfig(
+      sttBackend: var_sttBackend,
+      sttLanguage: var_sttLanguage,
+      translateFrom: var_translateFrom,
+      translateTo: var_translateTo,
+      voicePath: var_voicePath,
+      ttsSpeed: var_ttsSpeed,
+      groqApiKey: var_groqApiKey,
+      deepgramApiKey: var_deepgramApiKey,
+      hfToken: var_hfToken,
+      parakeetModelDir: var_parakeetModelDir,
+      vadModelPath: var_vadModelPath,
+      audioOutput: var_audioOutput,
+    );
+  }
+
+  @protected
+  FfiEngineEvent sse_decode_ffi_engine_event(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var tag_ = sse_decode_i_32(deserializer);
+    switch (tag_) {
+      case 0:
+        var var_status = sse_decode_String(deserializer);
+        return FfiEngineEvent_StatusChanged(status: var_status);
+      case 1:
+        var var_original = sse_decode_String(deserializer);
+        var var_translated = sse_decode_String(deserializer);
+        return FfiEngineEvent_Transcript(
+          original: var_original,
+          translated: var_translated,
+        );
+      case 2:
+        var var_message = sse_decode_String(deserializer);
+        return FfiEngineEvent_Error(message: var_message);
+      default:
+        throw UnimplementedError('');
+    }
+  }
+
+  @protected
+  FfiModelStatus sse_decode_ffi_model_status(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_sttReady = sse_decode_bool(deserializer);
+    var var_sttPath = sse_decode_String(deserializer);
+    var var_vadReady = sse_decode_bool(deserializer);
+    var var_vadPath = sse_decode_String(deserializer);
+    var var_voiceReady = sse_decode_bool(deserializer);
+    var var_voicePath = sse_decode_String(deserializer);
+    return FfiModelStatus(
+      sttReady: var_sttReady,
+      sttPath: var_sttPath,
+      vadReady: var_vadReady,
+      vadPath: var_vadPath,
+      voiceReady: var_voiceReady,
+      voicePath: var_voicePath,
+    );
+  }
+
+  @protected
+  List<FfiAudioDevice> sse_decode_list_ffi_audio_device(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <FfiAudioDevice>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_ffi_audio_device(deserializer));
+    }
+    return ans_;
   }
 
   @protected
@@ -333,12 +738,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  bool sse_decode_bool(SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return deserializer.buffer.getUint8() != 0;
-  }
-
-  @protected
   void sse_encode_AnyhowException(
     AnyhowException self,
     SseSerializer serializer,
@@ -365,9 +764,127 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_StreamSink_ffi_engine_event_Sse(
+    RustStreamSink<FfiEngineEvent> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(
+      self.setupAndSerialize(
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_ffi_engine_event,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+      ),
+      serializer,
+    );
+  }
+
+  @protected
   void sse_encode_String(String self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_list_prim_u_8_strict(utf8.encoder.convert(self), serializer);
+  }
+
+  @protected
+  void sse_encode_bool(bool self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putUint8(self ? 1 : 0);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_ffi_engine_config(
+    FfiEngineConfig self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_ffi_engine_config(self, serializer);
+  }
+
+  @protected
+  void sse_encode_f_32(double self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putFloat32(self);
+  }
+
+  @protected
+  void sse_encode_ffi_audio_device(
+    FfiAudioDevice self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.name, serializer);
+    sse_encode_bool(self.isDefault, serializer);
+    sse_encode_bool(self.isInput, serializer);
+  }
+
+  @protected
+  void sse_encode_ffi_engine_config(
+    FfiEngineConfig self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.sttBackend, serializer);
+    sse_encode_String(self.sttLanguage, serializer);
+    sse_encode_String(self.translateFrom, serializer);
+    sse_encode_String(self.translateTo, serializer);
+    sse_encode_String(self.voicePath, serializer);
+    sse_encode_f_32(self.ttsSpeed, serializer);
+    sse_encode_String(self.groqApiKey, serializer);
+    sse_encode_String(self.deepgramApiKey, serializer);
+    sse_encode_String(self.hfToken, serializer);
+    sse_encode_String(self.parakeetModelDir, serializer);
+    sse_encode_String(self.vadModelPath, serializer);
+    sse_encode_String(self.audioOutput, serializer);
+  }
+
+  @protected
+  void sse_encode_ffi_engine_event(
+    FfiEngineEvent self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    switch (self) {
+      case FfiEngineEvent_StatusChanged(status: final status):
+        sse_encode_i_32(0, serializer);
+        sse_encode_String(status, serializer);
+      case FfiEngineEvent_Transcript(
+        original: final original,
+        translated: final translated,
+      ):
+        sse_encode_i_32(1, serializer);
+        sse_encode_String(original, serializer);
+        sse_encode_String(translated, serializer);
+      case FfiEngineEvent_Error(message: final message):
+        sse_encode_i_32(2, serializer);
+        sse_encode_String(message, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_ffi_model_status(
+    FfiModelStatus self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_bool(self.sttReady, serializer);
+    sse_encode_String(self.sttPath, serializer);
+    sse_encode_bool(self.vadReady, serializer);
+    sse_encode_String(self.vadPath, serializer);
+    sse_encode_bool(self.voiceReady, serializer);
+    sse_encode_String(self.voicePath, serializer);
+  }
+
+  @protected
+  void sse_encode_list_ffi_audio_device(
+    List<FfiAudioDevice> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_ffi_audio_device(item, serializer);
+    }
   }
 
   @protected
@@ -401,11 +918,5 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_i_32(int self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putInt32(self);
-  }
-
-  @protected
-  void sse_encode_bool(bool self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    serializer.buffer.putUint8(self ? 1 : 0);
   }
 }

@@ -81,9 +81,9 @@ enum EngineEvent {
 - Confirmă că async streaming funcționează pe Linux desktop
 
 ### Done criteria
-- [ ] Flutter app pornește pe Linux
-- [ ] Apel Rust → Flutter funcționează (ping/pong)
-- [ ] Stream Rust → Flutter funcționează (events)
+- [x] Flutter app pornește pe Linux
+- [x] Apel Rust → Flutter funcționează (ping/pong)
+- [x] Stream Rust → Flutter funcționează (events)
 - [ ] Zero crash-uri la start/stop repetat
 
 ---
