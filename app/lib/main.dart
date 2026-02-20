@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
-import 'dart:io';
+import 'package:talkye_app/src/rust/api/simple.dart';
+import 'package:talkye_app/src/rust/frb_generated.dart';
 
-void main() {
+Future<void> main() async {
+  await RustLib.init();
   runApp(const TalkyeApp());
 }
 
@@ -15,154 +17,124 @@ class TalkyeApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark(useMaterial3: true).copyWith(
         scaffoldBackgroundColor: const Color(0xFF0A0A0A),
+        colorScheme: ColorScheme.dark(
+          primary: const Color(0xFF4CAF50),
+          surface: const Color(0xFF0A0A0A),
+        ),
       ),
-      home: const TranslationPage(),
+      home: const BridgeTestPage(),
     );
   }
 }
 
-class TranslationPage extends StatefulWidget {
-  const TranslationPage({super.key});
+/// Stage 1 test page — verifies FFI bridge works.
+class BridgeTestPage extends StatefulWidget {
+  const BridgeTestPage({super.key});
 
   @override
-  State<TranslationPage> createState() => _TranslationPageState();
+  State<BridgeTestPage> createState() => _BridgeTestPageState();
 }
 
-class _TranslationPageState extends State<TranslationPage> {
-  bool _isRunning = false;
-  Process? _process;
-  String _status = 'Ready';
-
-  Future<void> _toggle() async {
-    if (_isRunning) {
-      _stop();
-    } else {
-      await _start();
-    }
-  }
-
-  Future<void> _start() async {
-    setState(() {
-      _isRunning = true;
-      _status = 'Starting...';
-    });
-
-    try {
-      // Run the Rust binary from project root
-      _process = await Process.start(
-        'cargo',
-        ['run', '--release'],
-        workingDirectory: '../core',
-        environment: {
-          ...Platform.environment,
-          'RUST_LOG': 'info',
-        },
-      );
-
-      setState(() => _status = 'Translating — speak Romanian');
-
-      // Log stdout
-      _process!.stdout.transform(const SystemEncoding().decoder).listen(
-        (data) => debugPrint('[talkye] $data'),
-      );
-      _process!.stderr.transform(const SystemEncoding().decoder).listen(
-        (data) => debugPrint('[talkye] $data'),
-      );
-
-      // Handle process exit
-      _process!.exitCode.then((code) {
-        if (mounted) {
-          setState(() {
-            _isRunning = false;
-            _status = code == 0 ? 'Stopped' : 'Error (code $code)';
-            _process = null;
-          });
-        }
-      });
-    } catch (e) {
-      setState(() {
-        _isRunning = false;
-        _status = 'Failed: $e';
-        _process = null;
-      });
-    }
-  }
-
-  void _stop() {
-    _process?.kill(ProcessSignal.sigint);
-    setState(() {
-      _isRunning = false;
-      _status = 'Stopped';
-      _process = null;
-    });
-  }
+class _BridgeTestPageState extends State<BridgeTestPage> {
+  String _syncResult = '';
+  String _asyncResult = '';
+  final List<String> _streamEvents = [];
+  bool _streamRunning = false;
 
   @override
-  void dispose() {
-    _process?.kill(ProcessSignal.sigint);
-    super.dispose();
+  void initState() {
+    super.initState();
+    _testSync();
+  }
+
+  void _testSync() {
+    final greeting = greet(name: "Flutter");
+    final version = engineVersion();
+    setState(() {
+      _syncResult = '$greeting\nEngine v$version';
+    });
+  }
+
+  Future<void> _testAsync() async {
+    setState(() => _asyncResult = 'Running...');
+    final result = await testAsync(delayMs: 500);
+    setState(() => _asyncResult = result);
+  }
+
+  void _testStream() {
+    setState(() {
+      _streamEvents.clear();
+      _streamRunning = true;
+    });
+
+    testStream(count: 5, intervalMs: 300).listen(
+      (event) {
+        setState(() => _streamEvents.add(event));
+      },
+      onDone: () {
+        setState(() => _streamRunning = false);
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Center(
+      appBar: AppBar(
+        title: const Text('Talkye Meet — FFI Bridge Test'),
+        backgroundColor: Colors.transparent,
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(24),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Talkye Meet',
-              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                color: Colors.white,
-                fontWeight: FontWeight.w300,
-              ),
+            _section('1. Sync Call (Rust → Dart)', _syncResult),
+            const SizedBox(height: 16),
+            _section('2. Async Call', _asyncResult),
+            ElevatedButton(
+              onPressed: _testAsync,
+              child: const Text('Test Async'),
             ),
-            const SizedBox(height: 8),
-            Text(
-              'Real-time voice translation',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Colors.grey,
-              ),
+            const SizedBox(height: 16),
+            _section(
+              '3. Stream (Rust → Dart)',
+              _streamEvents.isEmpty
+                  ? (_streamRunning ? 'Starting...' : 'Not started')
+                  : _streamEvents.join('\n'),
             ),
-            const SizedBox(height: 48),
-            // The button
-            GestureDetector(
-              onTap: _toggle,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                width: 120,
-                height: 120,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: _isRunning
-                      ? const Color(0xFF1C0A0A)
-                      : const Color(0xFF1A1A1A),
-                  border: Border.all(
-                    color: _isRunning
-                        ? const Color(0xFFEF4444)
-                        : const Color(0xFF333333),
-                    width: 2,
-                  ),
-                ),
-                child: Icon(
-                  _isRunning ? Icons.stop_rounded : Icons.mic_rounded,
-                  size: 48,
-                  color: _isRunning
-                      ? const Color(0xFFEF4444)
-                      : const Color(0xFF888888),
-                ),
-              ),
-            ),
-            const SizedBox(height: 24),
-            Text(
-              _status,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Colors.grey,
-              ),
+            ElevatedButton(
+              onPressed: _streamRunning ? null : _testStream,
+              child: Text(_streamRunning ? 'Streaming...' : 'Test Stream'),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _section(String title, String content) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: const TextStyle(color: Colors.grey, fontSize: 12)),
+        const SizedBox(height: 4),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1A1A1A),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            content.isEmpty ? '—' : content,
+            style: const TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 14,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
