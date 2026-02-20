@@ -118,6 +118,44 @@ Necesită testare separată.
 | Traducere | ❌ | ❌ | ❌ | ✅ built-in |
 | Maturitate | Nouă dar activă | Matură | Foarte matură | Nouă |
 
+## Silero VAD Integration
+
+Parakeet TDT v3 nu are streaming nativ (e offline model). Pentru a obține comportament streaming,
+folosim Silero VAD V5 pentru detecția activității vocale:
+
+- **Model**: `silero_vad.onnx` (~2.2MB) de pe [onnx-community/silero-vad](https://huggingface.co/onnx-community/silero-vad)
+- **Runtime**: ONNX Runtime (partajat cu parakeet-rs, `ort 2.0.0-rc.11`)
+- **Input**: 512 samples (32ms) la 16kHz, float32 normalizat [-1, 1]
+- **Output**: probabilitate speech 0.0–1.0 per chunk
+- **State**: recurrent [2, 1, 128] — se acumulează între chunk-uri
+- **Inferență**: ~1ms per chunk pe CPU
+
+**Notă importantă**: Modelul ONNX de pe GitHub (`snakers4/silero-vad/src/silero_vad/data/`) este broken —
+returnează constant ~0.0005 indiferent de input. Modelul corect este pe HuggingFace:
+`onnx-community/silero-vad/onnx/model.onnx`.
+
+### Streaming Strategy cu VAD
+
+```
+Audio chunks (20ms) → Silero VAD → speech/silence detection
+                                         │
+                    ┌────────────────────┤
+                    ▼                    ▼
+              Speech detected      Silence detected
+              (vad > 0.5)          (vad ≤ 0.5)
+                    │                    │
+              Buffer audio         ┌─────┴─────┐
+                    │              │            │
+              Force flush      Smart flush   End of utterance
+              if > 3.5s       if buf > 1.8s  if silence > 600ms
+                               (mid-speech)   (clean break)
+```
+
+- **Smart flush**: transcrie la pauze naturale (micro-pauze între cuvinte/fraze)
+- **Overlap buffer**: 0.5s (8000 samples) context între chunk-uri, deduplicate via word timestamps
+- **Forced flush**: safety net la 3.5s speech continuu
+- **End of utterance**: 600ms silence → transcrie tot, reset state
+
 ## Plan de Implementare
 
 ### Faza 1: parakeet-rs (ParakeetEOU streaming)

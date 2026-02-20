@@ -9,6 +9,7 @@ pub mod pipeline;
 pub mod stt;
 pub mod translate;
 pub mod tts;
+pub mod vad;
 
 pub use config::Config;
 pub use pipeline::Pipeline;

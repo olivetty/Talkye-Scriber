@@ -21,6 +21,7 @@ pub struct SttConfig {
     pub endpointing_ms: u32,
     pub utterance_end_ms: u32,
     pub parakeet_model: Option<String>,
+    pub vad_model: Option<String>,
 }
 
 pub struct TranslateConfig {
@@ -73,6 +74,7 @@ impl Config {
                 endpointing_ms: env_parse("DEEPGRAM_ENDPOINTING", 500),
                 utterance_end_ms: env_parse("DEEPGRAM_UTTERANCE_END", 1500),
                 parakeet_model: env_optional_single("PARAKEET_MODEL"),
+                vad_model: env_optional_single("VAD_MODEL"),
             },
             translate: TranslateConfig {
                 api_key: env_required("GROQ_API_KEY")?,

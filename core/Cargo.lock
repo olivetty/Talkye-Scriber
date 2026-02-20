@@ -3170,6 +3170,8 @@ dependencies = [
  "dotenvy",
  "futures-util",
  "http",
+ "ndarray",
+ "ort",
  "parakeet-rs",
  "pocket-tts",
  "reqwest",

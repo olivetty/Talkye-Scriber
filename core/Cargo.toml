@@ -33,6 +33,10 @@ pocket-tts = "0.6"
 # Local STT — NVIDIA Parakeet TDT v3 (25 EU languages, ONNX Runtime)
 parakeet-rs = "0.3"
 
+# ONNX Runtime — shared with parakeet-rs, used for Silero VAD
+ort = "=2.0.0-rc.11"
+ndarray = "0.17"
+
 # Tensor ops (used by precompute_voice binary)
 candle-core = "0.9"
 

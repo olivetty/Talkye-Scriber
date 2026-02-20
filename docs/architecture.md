@@ -26,6 +26,8 @@ Downloadable app for Mac + Linux. $20/month subscription.
 │  ├── deepgram.rs ─── Deepgram Nova-3 WebSocket (dev/testing)    │
 │  └── parakeet.rs ─── Local STT via parakeet-rs (production)     │
 │                                                                 │
+│  vad.rs ─────── Silero VAD V5 neural voice activity detection   │
+│                                                                 │
 │  translate.rs ── Groq LLM translation with context window       │
 │  tts.rs ─────── Pocket TTS voice cloning (local CPU, free)      │
 │  pipeline.rs ── Orchestration: accumulator + parallel translate  │
@@ -152,6 +154,7 @@ Deliverable: installable desktop app.
 | Translation concurrency | 3 parallel + ordered | Reduces latency when multiple fragments queue up |
 | TTS engine | pocket-tts (Rust crate) | Voice cloning, streaming, CPU-only, MIT, $0 |
 | STT (production) | parakeet-rs (Parakeet TDT v3) | Local, 25 EU langs, 600M params, ONNX, $0 |
+| VAD | Silero VAD V5 (ONNX) | Neural speech detection, 2.2MB, ~1ms/chunk |
 | STT (dev/testing) | Deepgram Nova-3 | Best streaming quality, good for comparison |
 | LLM translation | Groq (Llama 3.3 70B) | ~150ms, cheap ($0.02/hr), good quality |
 | Product model | $20/month subscription | 84-97% margin depending on usage |
@@ -178,7 +181,8 @@ See `docs/local-stt-research.md` for full research.
 | `audio/virtual_device.rs` | Create/destroy PulseAudio null-sinks | config (Phase 2) |
 | `stt/mod.rs` | SttBackend trait, factory, SttEvent types | config |
 | `stt/deepgram.rs` | Deepgram WebSocket: send audio, emit SttEvents | config |
-| `stt/parakeet.rs` | Local STT via parakeet-rs ParakeetEOU | config |
+| `stt/parakeet.rs` | Local STT via parakeet-rs + Silero VAD | config, vad |
+| `vad.rs` | Silero VAD V5 neural voice activity detection | config |
 | `translate.rs` | Groq API: translate text with context window | config |
 | `tts.rs` | Pocket TTS: text → PCM stream with voice clone | config |
 | `pipeline.rs` | Wire everything: accumulator + parallel translate | all above |

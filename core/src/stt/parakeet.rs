@@ -1,11 +1,11 @@
 //! Local STT via parakeet-rs — NVIDIA Parakeet TDT v3.
 //!
 //! Uses ParakeetTDT (600M params, 25 EU languages, auto-detect).
-//! Since TDT is batch (not streaming), we implement chunked transcription:
-//! - Accumulate audio in a buffer
-//! - Simple energy-based VAD to detect speech/silence
-//! - Transcribe when silence detected or buffer exceeds max duration
-//! - Emit SttEvent::Final with word-level timestamps
+//! Chunked transcription with:
+//! - Silero VAD (neural) for precise speech/silence detection
+//! - Smart flush: transcribe at natural pauses (VAD dips), not fixed intervals
+//! - Overlap buffer: 0.5s context carried between chunks to avoid mid-word cuts
+//! - Word-level timestamps for overlap deduplication
 
 use anyhow::{Context, Result};
 use tokio::sync::mpsc;
@@ -13,14 +13,23 @@ use std::time::Instant;
 
 use crate::audio::AudioChunk;
 use crate::config::SttConfig;
+use crate::vad::SileroVad;
 use super::{SttEvent, SttWord};
 
-// Trait needed for transcribe_samples()
 use parakeet_rs::Transcriber;
 
-/// Energy threshold for speech detection (RMS of i16 samples).
-/// Silence is typically < 200, speech > 500.
-const SPEECH_ENERGY_THRESHOLD: f64 = 300.0;
+// ── VAD thresholds ──
+
+/// VAD probability above this = speech.
+const VAD_SPEECH_THRESHOLD: f32 = 0.5;
+
+// ── Timing constants ──
+
+/// Minimum buffer before smart flush at a VAD pause (ms).
+const MIN_FLUSH_MS: u64 = 1800;
+
+/// Maximum buffer before forced flush during continuous speech (ms).
+const MAX_FLUSH_MS: u64 = 3500;
 
 /// Minimum speech duration before we consider transcribing (ms).
 const MIN_SPEECH_MS: u64 = 300;
@@ -31,24 +40,28 @@ const SILENCE_TRIGGER_MS: u64 = 600;
 /// Maximum buffer duration before forced transcription (ms).
 const MAX_BUFFER_MS: u64 = 8000;
 
-/// Periodic flush during active speech — prevents huge batches (ms).
-/// Similar to Deepgram's endpointing: transcribe every ~2.5s even without silence.
-const PERIODIC_FLUSH_MS: u64 = 2500;
-
 /// Interval for emitting interim results (ms).
 const INTERIM_INTERVAL_MS: u64 = 1500;
 
-/// Run the Parakeet STT backend.
+// ── Overlap buffer ──
+
+/// Overlap duration in seconds — context carried to next chunk.
+const OVERLAP_SECS: f32 = 0.5;
+
+/// Overlap in samples at 16kHz.
+const OVERLAP_SAMPLES: usize = (16000.0 * OVERLAP_SECS) as usize; // 8000
+
+/// Run the Parakeet STT backend with Silero VAD.
 pub async fn run_parakeet_stt(
     config: &SttConfig,
     audio_rx: mpsc::Receiver<AudioChunk>,
     event_tx: mpsc::Sender<SttEvent>,
 ) -> Result<()> {
+    let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+
+    // Load Parakeet TDT model
     let model_path_raw = config.parakeet_model.clone()
         .unwrap_or_else(|| "models/parakeet-tdt".into());
-
-    // Resolve relative to project root (same as .env resolution)
-    let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let model_path = if std::path::Path::new(&model_path_raw).is_absolute() {
         model_path_raw
     } else {
@@ -57,72 +70,81 @@ pub async fn run_parakeet_stt(
 
     tracing::info!("[STT-PARAKEET] loading model from '{model_path}'...");
     let t0 = Instant::now();
-
-    // Load model in blocking thread (heavy I/O + ONNX init)
     let model = tokio::task::spawn_blocking(move || {
         parakeet_rs::ParakeetTDT::from_pretrained(&model_path, None)
     })
     .await?
     .context("Failed to load Parakeet TDT model")?;
+    tracing::info!("[STT-PARAKEET] model loaded in {}ms", t0.elapsed().as_millis());
 
-    let load_ms = t0.elapsed().as_millis();
-    tracing::info!("[STT-PARAKEET] model loaded in {load_ms}ms");
+    // Load Silero VAD model
+    let vad_path_raw = config.vad_model.clone()
+        .unwrap_or_else(|| "models/silero_vad.onnx".into());
+    let vad_path = if std::path::Path::new(&vad_path_raw).is_absolute() {
+        std::path::PathBuf::from(vad_path_raw)
+    } else {
+        project_root.join(&vad_path_raw)
+    };
 
-    // Run the VAD + transcription loop
-    run_vad_loop(model, audio_rx, event_tx).await
+    let t1 = Instant::now();
+    let vad = SileroVad::new(&vad_path)?;
+    tracing::info!("[STT-PARAKEET] Silero VAD loaded in {}ms", t1.elapsed().as_millis());
+
+    run_vad_loop(model, vad, audio_rx, event_tx).await
 }
 
-/// VAD + chunked transcription loop.
+/// VAD + chunked transcription loop with overlap buffer and smart flush.
+///
+/// Key insight: smart flush happens when VAD detects a brief silence (micro-pause
+/// between words/phrases). This is the `else if speech_active` branch where
+/// `is_speech = false` but we haven't hit SILENCE_TRIGGER_MS yet.
 async fn run_vad_loop(
     mut model: parakeet_rs::ParakeetTDT,
+    mut vad: SileroVad,
     mut audio_rx: mpsc::Receiver<AudioChunk>,
     event_tx: mpsc::Sender<SttEvent>,
 ) -> Result<()> {
-    // Audio buffer: f32 samples at 16kHz
-    let mut audio_buf: Vec<f32> = Vec::with_capacity(16000 * 10); // 10s capacity
+    let mut audio_buf: Vec<f32> = Vec::with_capacity(16000 * 10);
+    let mut overlap_buf: Vec<f32> = Vec::new();
     let mut speech_active = false;
     let mut silence_start: Option<Instant> = None;
     let mut speech_start: Option<Instant> = None;
     let mut last_interim = Instant::now();
 
-    tracing::info!("[STT-PARAKEET] ready, listening...");
+    tracing::info!("[STT-PARAKEET] ready, listening (Silero VAD + overlap buffer)...");
 
     while let Some(chunk) = audio_rx.recv().await {
-        // Convert i16 LE bytes to f32 samples
         let samples = bytes_to_f32(&chunk);
-        let energy = rms_energy(&samples);
-
-        let is_speech = energy > SPEECH_ENERGY_THRESHOLD;
+        let vad_prob = vad.avg_probability(&samples)?;
+        let is_speech = vad_prob > VAD_SPEECH_THRESHOLD;
 
         if is_speech {
             if !speech_active {
                 speech_active = true;
                 speech_start = Some(Instant::now());
                 silence_start = None;
-                tracing::debug!("[STT-PARAKEET] speech started (energy={energy:.0})");
+                tracing::debug!("[STT-PARAKEET] speech started (vad={vad_prob:.2})");
             } else {
                 silence_start = None;
             }
             audio_buf.extend_from_slice(&samples);
 
-            // Periodic flush during continuous speech — prevents huge batches
-            let buffer_ms = (audio_buf.len() as u64 * 1000) / 16000;
-            if buffer_ms >= PERIODIC_FLUSH_MS {
+            // Safety net: force flush if buffer too long during continuous speech
+            let buffer_ms = samples_to_ms(audio_buf.len());
+            if buffer_ms >= MAX_FLUSH_MS {
                 tracing::info!(
-                    "[STT-PARAKEET] periodic flush ({buffer_ms}ms of active speech)"
+                    "[STT-PARAKEET] forced flush ({buffer_ms}ms continuous speech, vad={vad_prob:.2})"
                 );
-                if let Some(text) = transcribe_buffer(&mut model, &audio_buf) {
-                    if !text.is_empty() {
-                        emit_final(&event_tx, &text, false).await;
-                    }
-                }
-                audio_buf.clear();
-                // Keep speech_active=true, reset speech_start for next interval
+                flush_with_overlap(
+                    &mut model, &mut audio_buf, &mut overlap_buf,
+                    &event_tx, false,
+                ).await;
                 speech_start = Some(Instant::now());
                 last_interim = Instant::now();
             }
         } else if speech_active {
-            // Still accumulating during short silence
+            // VAD says no speech, but we're in active speech mode.
+            // This is a micro-pause — perfect flush opportunity!
             audio_buf.extend_from_slice(&samples);
 
             if silence_start.is_none() {
@@ -130,11 +152,27 @@ async fn run_vad_loop(
             }
 
             let silence_ms = silence_start.unwrap().elapsed().as_millis() as u64;
-            let buffer_ms = (audio_buf.len() as u64 * 1000) / 16000;
+            let buffer_ms = samples_to_ms(audio_buf.len());
 
-            // Emit interim results periodically
+            // Smart flush: VAD detected a pause AND we have enough buffered
+            if buffer_ms >= MIN_FLUSH_MS && silence_ms < SILENCE_TRIGGER_MS {
+                tracing::info!(
+                    "[STT-PARAKEET] smart flush at VAD pause ({buffer_ms}ms, silence={silence_ms}ms)"
+                );
+                flush_with_overlap(
+                    &mut model, &mut audio_buf, &mut overlap_buf,
+                    &event_tx, false,
+                ).await;
+                // Stay in speech_active — this is a mid-speech flush
+                speech_start = Some(Instant::now());
+                last_interim = Instant::now();
+                silence_start = None;
+                continue;
+            }
+
+            // Interim results during longer pauses
             if last_interim.elapsed().as_millis() as u64 >= INTERIM_INTERVAL_MS
-                && audio_buf.len() > 4800 // at least 300ms
+                && audio_buf.len() > 4800
             {
                 if let Some(text) = transcribe_buffer(&mut model, &audio_buf) {
                     if !text.is_empty() {
@@ -144,25 +182,25 @@ async fn run_vad_loop(
                 last_interim = Instant::now();
             }
 
-            // End of utterance: silence exceeded threshold
+            // End of utterance: extended silence
             if silence_ms >= SILENCE_TRIGGER_MS {
                 let speech_ms = speech_start.map(|s| s.elapsed().as_millis() as u64).unwrap_or(0);
 
                 if speech_ms >= MIN_SPEECH_MS && audio_buf.len() > 4800 {
                     tracing::info!(
-                        "[STT-PARAKEET] utterance end (speech={speech_ms}ms, silence={silence_ms}ms, buf={}ms)",
-                        buffer_ms
+                        "[STT-PARAKEET] utterance end (speech={speech_ms}ms, silence={silence_ms}ms, buf={buffer_ms}ms)"
                     );
-
-                    if let Some(text) = transcribe_buffer(&mut model, &audio_buf) {
+                    // Clean break — no overlap saved
+                    if let Some(text) = transcribe_with_overlap(&mut model, &audio_buf, &overlap_buf) {
                         if !text.is_empty() {
                             emit_final(&event_tx, &text, true).await;
                         }
                     }
                 }
 
-                // Reset
                 audio_buf.clear();
+                overlap_buf.clear();
+                vad.reset();
                 speech_active = false;
                 silence_start = None;
                 speech_start = None;
@@ -173,37 +211,116 @@ async fn run_vad_loop(
 
             // Force transcription if buffer too long
             if buffer_ms >= MAX_BUFFER_MS {
-                tracing::info!("[STT-PARAKEET] max buffer reached ({buffer_ms}ms), forcing transcription");
-
-                if let Some(text) = transcribe_buffer(&mut model, &audio_buf) {
-                    if !text.is_empty() {
-                        emit_final(&event_tx, &text, false).await;
-                    }
-                }
-
-                audio_buf.clear();
+                tracing::info!("[STT-PARAKEET] max buffer ({buffer_ms}ms), forcing transcription");
+                flush_with_overlap(
+                    &mut model, &mut audio_buf, &mut overlap_buf,
+                    &event_tx, false,
+                ).await;
                 speech_active = false;
                 silence_start = None;
                 speech_start = None;
                 last_interim = Instant::now();
             }
         }
-        // If not speech_active and not is_speech, just discard silence
     }
 
     tracing::warn!("[STT-PARAKEET] audio channel closed");
     Ok(())
 }
 
-/// Transcribe audio buffer using ParakeetTDT.
+/// Flush audio buffer with overlap: transcribe, emit, save overlap for next chunk.
+async fn flush_with_overlap(
+    model: &mut parakeet_rs::ParakeetTDT,
+    audio_buf: &mut Vec<f32>,
+    overlap_buf: &mut Vec<f32>,
+    event_tx: &mpsc::Sender<SttEvent>,
+    speech_final: bool,
+) {
+    if let Some(text) = transcribe_with_overlap(model, audio_buf, overlap_buf) {
+        if !text.is_empty() {
+            emit_final(event_tx, &text, speech_final).await;
+        }
+    }
+
+    // Save last OVERLAP_SAMPLES as context for next chunk
+    if audio_buf.len() > OVERLAP_SAMPLES {
+        *overlap_buf = audio_buf[audio_buf.len() - OVERLAP_SAMPLES..].to_vec();
+    } else {
+        *overlap_buf = audio_buf.clone();
+    }
+    audio_buf.clear();
+}
+
+/// Transcribe audio with overlap prefix. Uses word timestamps to skip overlap region.
+fn transcribe_with_overlap(
+    model: &mut parakeet_rs::ParakeetTDT,
+    audio_buf: &[f32],
+    overlap_buf: &[f32],
+) -> Option<String> {
+    if audio_buf.is_empty() {
+        return None;
+    }
+
+    // Prepend overlap buffer for context
+    let (full_audio, overlap_duration) = if !overlap_buf.is_empty() {
+        let mut combined = Vec::with_capacity(overlap_buf.len() + audio_buf.len());
+        combined.extend_from_slice(overlap_buf);
+        combined.extend_from_slice(audio_buf);
+        let overlap_secs = overlap_buf.len() as f64 / 16000.0;
+        (combined, overlap_secs)
+    } else {
+        (audio_buf.to_vec(), 0.0)
+    };
+
+    let t0 = Instant::now();
+    match model.transcribe_samples(
+        full_audio,
+        16000,
+        1,
+        Some(parakeet_rs::TimestampMode::Words),
+    ) {
+        Ok(result) => {
+            let ms = t0.elapsed().as_millis();
+            let audio_ms = samples_to_ms(audio_buf.len());
+
+            if overlap_duration > 0.0 && !result.tokens.is_empty() {
+                // Filter out words that fall within the overlap region
+                let new_words: Vec<&str> = result.tokens.iter()
+                    .filter(|t| t.start as f64 >= overlap_duration - 0.05) // 50ms tolerance
+                    .map(|t| t.text.as_str())
+                    .collect();
+
+                let text = new_words.join("").trim().to_string();
+                let skipped = result.tokens.len() - new_words.len();
+                tracing::info!(
+                    "[STT-PARAKEET] transcribed {audio_ms}ms (overlap={:.0}ms, skipped={skipped}w) in {ms}ms: \"{text}\"",
+                    overlap_duration * 1000.0
+                );
+                Some(text)
+            } else {
+                tracing::info!(
+                    "[STT-PARAKEET] transcribed {audio_ms}ms in {ms}ms: \"{}\"",
+                    result.text
+                );
+                Some(result.text)
+            }
+        }
+        Err(e) => {
+            tracing::error!("[STT-PARAKEET] transcription error: {e:#}");
+            None
+        }
+    }
+}
+
+/// Transcribe audio buffer without overlap (used for interim results).
 fn transcribe_buffer(model: &mut parakeet_rs::ParakeetTDT, audio: &[f32]) -> Option<String> {
     let t0 = Instant::now();
     match model.transcribe_samples(audio.to_vec(), 16000, 1, Some(parakeet_rs::TimestampMode::Words)) {
         Ok(result) => {
             let ms = t0.elapsed().as_millis();
-            let audio_ms = (audio.len() as u64 * 1000) / 16000;
+            let audio_ms = samples_to_ms(audio.len());
             tracing::info!(
-                "[STT-PARAKEET] transcribed {audio_ms}ms audio in {ms}ms: \"{}\"",
+                "[STT-PARAKEET] interim {audio_ms}ms in {ms}ms: \"{}\"",
                 result.text
             );
             Some(result.text)
@@ -244,11 +361,7 @@ fn bytes_to_f32(bytes: &[u8]) -> Vec<f32> {
         .collect()
 }
 
-/// Calculate RMS energy of f32 samples.
-fn rms_energy(samples: &[f32]) -> f64 {
-    if samples.is_empty() {
-        return 0.0;
-    }
-    let sum: f64 = samples.iter().map(|s| (*s as f64) * (*s as f64)).sum();
-    (sum / samples.len() as f64).sqrt() * 32768.0 // Scale back to i16 range for threshold
+/// Convert sample count to milliseconds at 16kHz.
+fn samples_to_ms(samples: usize) -> u64 {
+    (samples as u64 * 1000) / 16000
 }
