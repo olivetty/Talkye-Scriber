@@ -24,7 +24,9 @@ impl SttConfig {
         Ok(Self {
             api_key: std::env::var("DEEPGRAM_API_KEY")
                 .context("DEEPGRAM_API_KEY not set")?,
-            language: std::env::var("STT_LANGUAGE").unwrap_or_else(|_| "ro".into()),
+            language: std::env::var("STT_LANGUAGE")
+                .or_else(|_| std::env::var("DICTATE_LANGUAGE"))
+                .unwrap_or_else(|_| "ro".into()),
             endpointing_ms: std::env::var("DEEPGRAM_ENDPOINTING")
                 .unwrap_or_else(|_| "500".into())
                 .parse()

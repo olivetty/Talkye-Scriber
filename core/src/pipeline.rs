@@ -36,7 +36,10 @@ impl Pipeline {
             .unwrap_or_else(|_| "8".into())
             .parse()
             .unwrap_or(8);
-        let audio_source = std::env::var("AUDIO_SOURCE").ok().filter(|s| !s.is_empty());
+        let audio_source = std::env::var("AUDIO_SOURCE")
+            .or_else(|_| std::env::var("DICTATE_SOURCE_NAME"))
+            .ok()
+            .filter(|s| !s.is_empty());
         let voice = std::env::var("POCKET_VOICE").unwrap_or_else(|_| "alba".into());
         let speed: f32 = std::env::var("POCKET_SPEED")
             .unwrap_or_else(|_| "1.0".into())
