@@ -17,3 +17,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
+
+# Optimize dependencies even in dev/debug builds (critical for pocket-tts / candle / ort)
+[profile.dev.package."*"]
+opt-level = 2

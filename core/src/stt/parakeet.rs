@@ -290,7 +290,7 @@ fn transcribe_with_overlap(
                     .map(|t| t.text.as_str())
                     .collect();
 
-                let text = new_words.join("").trim().to_string();
+                let text = new_words.join(" ").trim().to_string();
                 let skipped = result.tokens.len() - new_words.len();
                 tracing::info!(
                     "[STT-PARAKEET] transcribed {audio_ms}ms (overlap={:.0}ms, skipped={skipped}w) in {ms}ms: \"{text}\"",
