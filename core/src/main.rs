@@ -3,9 +3,9 @@ use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Load .env from project root (one level up from core/)
-    dotenvy::from_filename("../.env").ok();
-    dotenvy::dotenv().ok();
+    // Load .env from project root — uses compile-time path, works regardless of cwd
+    let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    dotenvy::from_path(project_root.join(".env")).ok();
 
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())

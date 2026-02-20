@@ -17,17 +17,23 @@ pub struct TtsEngine {
 }
 
 impl TtsEngine {
-    /// Load model and voice. `voice` is a built-in name or path to .wav.
+    /// Load model and voice. `voice` is a built-in name, path to .wav, or .safetensors.
     pub fn new(config: &TtsConfig) -> Result<Self> {
         let t0 = Instant::now();
-        let model = pocket_tts::TTSModel::load("default")
+        let model = pocket_tts::TTSModel::load("b6369a24")
             .context("Failed to load Pocket TTS model")?;
         let load_ms = t0.elapsed().as_millis();
 
         let t1 = Instant::now();
-        let voice_state = model
-            .get_voice_state(&config.voice)
-            .context("Failed to load voice")?;
+        let voice_state = if config.voice.ends_with(".safetensors") {
+            // Pre-computed voice prompt — instant load
+            model.get_voice_state_from_prompt_file(&config.voice)
+                .context("Failed to load pre-computed voice")?
+        } else {
+            // Raw .wav or built-in name — encode through Mimi (slow)
+            model.get_voice_state(&config.voice)
+                .context("Failed to load voice")?
+        };
         let voice_ms = t1.elapsed().as_millis();
 
         let sample_rate = model.sample_rate;

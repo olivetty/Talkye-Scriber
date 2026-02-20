@@ -46,6 +46,21 @@ pub struct AccumulatorConfig {
 impl Config {
     /// Load all config from environment variables (.env).
     pub fn from_env() -> Result<Self> {
+        // Resolve voice path relative to project root (not cwd)
+        let voice_raw = env_single("POCKET_VOICE", "alba");
+        let voice = if voice_raw.contains('/') || voice_raw.contains('.') {
+            // It's a path — resolve relative to project root
+            let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+            let resolved = project_root.join(&voice_raw);
+            if resolved.exists() {
+                resolved.to_string_lossy().to_string()
+            } else {
+                voice_raw // Fall back to raw value
+            }
+        } else {
+            voice_raw // Built-in voice name like "alba"
+        };
+
         Ok(Self {
             stt: SttConfig {
                 api_key: env_required("DEEPGRAM_API_KEY")?,
@@ -60,11 +75,11 @@ impl Config {
                 to_lang: env_single("TRANSLATE_TO", "English"),
             },
             tts: TtsConfig {
-                voice: env_single("POCKET_VOICE", "alba"),
+                voice,
                 speed: env_parse("POCKET_SPEED", 1.0),
             },
             audio: AudioConfig {
-                source: env_optional("AUDIO_SOURCE", "DICTATE_SOURCE_NAME"),
+                source: env_optional_single("AUDIO_SOURCE"),
                 virtual_speaker: env_single("VIRTUAL_SPEAKER_NAME", "live_interp_out"),
                 virtual_mic: env_single("VIRTUAL_MIC_NAME", "live_interp_in"),
             },
@@ -93,12 +108,9 @@ fn env_or(primary: &str, fallback: &str, default: &str) -> String {
         .unwrap_or_else(|_| default.into())
 }
 
-/// Try primary key, then fallback. None if both empty/missing.
-fn env_optional(primary: &str, fallback: &str) -> Option<String> {
-    std::env::var(primary)
-        .or_else(|_| std::env::var(fallback))
-        .ok()
-        .filter(|s| !s.is_empty())
+/// Single key, None if empty/missing.
+fn env_optional_single(key: &str) -> Option<String> {
+    std::env::var(key).ok().filter(|s| !s.is_empty())
 }
 
 fn env_parse<T: std::str::FromStr>(key: &str, default: T) -> T {

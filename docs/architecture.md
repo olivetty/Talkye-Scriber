@@ -1,6 +1,7 @@
 # Talkye Meet — Architecture
 
 Real-time voice translation for video calls. Speak your language, others hear theirs — in your voice.
+Downloadable app for Mac + Linux. $20/month subscription.
 
 ## System Overview
 
@@ -20,7 +21,11 @@ Real-time voice translation for video calls. Speak your language, others hear th
 │  ├── playback.rs ─── Speaker output via cpal                    │
 │  └── virtual_device.rs ── PulseAudio null-sinks (Phase 2)       │
 │                                                                 │
-│  stt.rs ─────── Deepgram Nova-3 WebSocket streaming client      │
+│  stt/                                                           │
+│  ├── mod.rs ──────── SttBackend trait + factory                 │
+│  ├── deepgram.rs ─── Deepgram Nova-3 WebSocket (dev/testing)    │
+│  └── parakeet.rs ─── Local STT via parakeet-rs (production)     │
+│                                                                 │
 │  translate.rs ── Groq LLM translation with context window       │
 │  tts.rs ─────── Pocket TTS voice cloning (local CPU, free)      │
 │  pipeline.rs ── Orchestration: accumulator + parallel translate  │
@@ -33,22 +38,23 @@ Real-time voice translation for video calls. Speak your language, others hear th
 Mic (cpal)
   │ AudioChunk (Vec<u8>, 16-bit PCM, 16kHz mono)
   ▼
-Deepgram STT (WebSocket)
+STT Backend (configurable: deepgram | parakeet)
   │ SttEvent (Interim | Final { words, speech_final } | UtteranceEnd)
   ▼
 Accumulator (in pipeline.rs)
   │ Collects words from Finals
   │ First flush: 4 words (fast response)
-  │ Subsequent: 8 words (better quality)
+  │ Subsequent: 5 words
+  │ Timeout flush: 1.5s safety net
   │ Immediate flush on speech_final / utterance_end
   ▼
 Parallel Translator (3 concurrent, ordered output)
   │ String (translated text)
   ▼
-Pocket TTS (streaming, voice clone)
-  │ PCM f32 chunks
+Pocket TTS (streaming, clause splitting, voice clone)
+  │ PCM f32 chunks (streamed per clause)
   ▼
-Speaker (cpal)
+Speaker (cpal, streaming ring buffer)
 ```
 
 Every arrow is a `tokio::mpsc` channel. Components don't know about each other — only the pipeline connects them.
@@ -105,13 +111,27 @@ Deliverable: installable desktop app.
 
 | Decision | Choice | Why |
 |---|---|---|
-| Audio I/O | cpal | Cross-platform, compiles into binary, no external deps. User installs app and it works — no need for parecord/paplay. |
-| Virtual devices | libpulse-binding | Programmatic PulseAudio control. No shelling out to pactl. |
-| Config format | .env (dotenvy) | Simple, proven, user edits one file. Works for dev and production. |
-| Translation concurrency | 3 parallel + ordered | Matches prototype. Reduces latency when multiple fragments queue up. |
-| TTS engine | pocket-tts (Rust crate) | Voice cloning, streaming, CPU-only, MIT, no API costs. |
-| STT | Deepgram Nova-3 | Best streaming accuracy, good endpointing, $0.0077/min. |
-| LLM | Groq (Llama 3.3 70B) | ~150-300ms per request, cheap, good translation quality. |
+| Audio I/O | cpal | Cross-platform, compiles into binary, no external deps |
+| Virtual devices | libpulse-binding | Programmatic PulseAudio control (Phase 2) |
+| Config format | .env (dotenvy) | Simple, proven, user edits one file |
+| Translation concurrency | 3 parallel + ordered | Reduces latency when multiple fragments queue up |
+| TTS engine | pocket-tts (Rust crate) | Voice cloning, streaming, CPU-only, MIT, $0 |
+| STT (production) | parakeet-rs (Parakeet TDT v3) | Local, 25 EU langs, 600M params, ONNX, $0 |
+| STT (dev/testing) | Deepgram Nova-3 | Best streaming quality, good for comparison |
+| LLM translation | Groq (Llama 3.3 70B) | ~150ms, cheap ($0.02/hr), good quality |
+| Product model | $20/month subscription | 84-97% margin depending on usage |
+
+## STT Backend Strategy
+
+Two backends, switchable via `STT_BACKEND` in `.env`:
+
+| Backend | Use case | Cost | Latency | Languages |
+|---|---|---|---|---|
+| `parakeet` | Production (app) | $0 | ~1-3s | 25 EU (incl. RO) |
+| `deepgram` | Dev/testing | $0.26/hr | ~0.3-0.5s | 36+ |
+
+Both emit the same `SttEvent` types → pipeline doesn't change.
+See `docs/local-stt-research.md` for full research.
 
 ## Module Responsibilities
 
@@ -119,9 +139,11 @@ Deliverable: installable desktop app.
 |---|---|---|
 | `config.rs` | Load .env, validate, expose typed Config struct | nothing |
 | `audio/capture.rs` | Open mic, stream PCM chunks via channel | config |
-| `audio/playback.rs` | Receive PCM chunks, play on speaker/device | config |
+| `audio/playback.rs` | Streaming ring buffer playback on speaker | config |
 | `audio/virtual_device.rs` | Create/destroy PulseAudio null-sinks | config (Phase 2) |
-| `stt.rs` | Deepgram WebSocket: send audio, emit SttEvents | config |
+| `stt/mod.rs` | SttBackend trait, factory, SttEvent types | config |
+| `stt/deepgram.rs` | Deepgram WebSocket: send audio, emit SttEvents | config |
+| `stt/parakeet.rs` | Local STT via parakeet-rs ParakeetEOU | config |
 | `translate.rs` | Groq API: translate text with context window | config |
 | `tts.rs` | Pocket TTS: text → PCM stream with voice clone | config |
 | `pipeline.rs` | Wire everything: accumulator + parallel translate | all above |
@@ -140,9 +162,12 @@ Deliverable: installable desktop app.
 
 ## Cost
 
-| Direction | Cost/hour | Components |
+| Component | Where | Cost/hour |
 |---|---|---|
-| Outgoing only | ~$0.52 | Deepgram STT $0.46 + Groq translate ~$0.06 + TTS $0 |
-| Bidirectional | ~$1.04 | 2× above |
+| STT | Local (parakeet-rs) | $0 |
+| Translation | Cloud (Groq) | ~$0.02 |
+| TTS | Local (pocket-tts) | $0 |
+| **Total** | | **~$0.02/hour** |
 
+Revenue: $20/user/month. Margin: 84-97%.
 See docs/cost-analysis.md for detailed breakdown.

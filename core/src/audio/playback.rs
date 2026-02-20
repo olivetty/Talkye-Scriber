@@ -1,13 +1,15 @@
-//! Audio playback via cpal.
+//! Audio playback via cpal — streaming.
 //!
-//! Receives PCM f32 chunks from TTS and plays them on the output device.
-//! Reference: prototype/test_deepgram.py speak_pocket() → paplay.
+//! Supports streaming playback: start a stream, push chunks as they arrive,
+//! finish when done. This eliminates the need to buffer all TTS audio.
+//! Reference: prototype/test_deepgram.py speak_pocket() → paplay streaming.
 
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use std::sync::{Arc, Mutex};
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
 
-/// Plays PCM audio on the default output device.
+/// Plays PCM audio on the default output device with streaming support.
 pub struct AudioPlayback {
     device: cpal::Device,
 }
@@ -25,39 +27,36 @@ impl AudioPlayback {
         Ok(Self { device })
     }
 
-    /// Play a buffer of f32 PCM samples at the given sample rate.
-    /// Blocks until playback completes.
-    pub fn play(&self, samples: &[f32], sample_rate: u32) -> Result<()> {
-        if samples.is_empty() {
-            return Ok(());
-        }
-
+    /// Start a streaming playback session at the given sample rate.
+    /// Push chunks with `push()`, then call `finish()` to drain and stop.
+    pub fn stream(&self, sample_rate: u32) -> Result<PlaybackStream> {
         let config = cpal::StreamConfig {
             channels: 1,
             sample_rate: cpal::SampleRate(sample_rate),
             buffer_size: cpal::BufferSize::Default,
         };
 
-        let data = Arc::new(Mutex::new(PlaybackState {
-            samples: samples.to_vec(),
-            position: 0,
-        }));
+        let buffer = Arc::new(Mutex::new(VecDeque::<f32>::with_capacity(48000)));
+        let done = Arc::new(AtomicBool::new(false));
+        let drained = Arc::new(AtomicBool::new(false));
 
-        let data_clone = data.clone();
-        let finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let finished_clone = finished.clone();
+        let buf_read = buffer.clone();
+        let done_read = done.clone();
+        let drained_flag = drained.clone();
 
         let stream = self.device.build_output_stream(
             &config,
             move |output: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                let mut state = data_clone.lock().unwrap();
+                let mut buf = buf_read.lock().unwrap();
                 for sample in output.iter_mut() {
-                    if state.position < state.samples.len() {
-                        *sample = state.samples[state.position];
-                        state.position += 1;
+                    if let Some(s) = buf.pop_front() {
+                        *sample = s;
                     } else {
                         *sample = 0.0;
-                        finished_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+                        // If producer is done and buffer empty, signal drained
+                        if done_read.load(Ordering::Relaxed) {
+                            drained_flag.store(true, Ordering::Relaxed);
+                        }
                     }
                 }
             },
@@ -67,18 +66,37 @@ impl AudioPlayback {
 
         stream.play().context("Failed to start playback")?;
 
-        // Wait for playback to finish
-        while !finished.load(std::sync::atomic::Ordering::Relaxed) {
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        // Small tail to let the last buffer drain
-        std::thread::sleep(std::time::Duration::from_millis(50));
-
-        Ok(())
+        Ok(PlaybackStream {
+            _stream: stream,
+            buffer,
+            done,
+            drained,
+        })
     }
 }
 
-struct PlaybackState {
-    samples: Vec<f32>,
-    position: usize,
+/// A live streaming playback session. Push audio chunks, then finish.
+pub struct PlaybackStream {
+    _stream: cpal::Stream,
+    buffer: Arc<Mutex<VecDeque<f32>>>,
+    done: Arc<AtomicBool>,
+    drained: Arc<AtomicBool>,
+}
+
+impl PlaybackStream {
+    /// Push a chunk of f32 PCM samples into the playback buffer.
+    pub fn push(&self, samples: &[f32]) {
+        let mut buf = self.buffer.lock().unwrap();
+        buf.extend(samples);
+    }
+
+    /// Signal no more data, wait for buffer to drain, then stop.
+    pub fn finish(self) {
+        self.done.store(true, Ordering::Relaxed);
+        while !self.drained.load(Ordering::Relaxed) {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        // Small tail to let the last hardware buffer drain
+        std::thread::sleep(std::time::Duration::from_millis(30));
+    }
 }

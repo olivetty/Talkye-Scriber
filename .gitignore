@@ -35,3 +35,6 @@ prototype/models/*.onnx
 
 # Voice samples (keep originals)
 # prototype/voices/ is tracked
+
+# Pre-computed voice states (generated, not source)
+voices/*.safetensors

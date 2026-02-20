@@ -3,6 +3,7 @@ name = "talkye-core"
 version = "0.1.0"
 edition = "2024"
 description = "Real-time voice translation engine for Talkye Meet"
+default-run = "talkye"
 
 [[bin]]
 name = "talkye"
@@ -26,7 +27,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 # TTS — voice cloning, streaming, CPU-only
+# Note: mkl feature causes hgemm_ linker error on Linux. Using native CPU opts instead.
 pocket-tts = "0.6"
+
+# Tensor ops (used by precompute_voice binary)
+candle-core = "0.9"
 
 # Config
 dotenvy = "0.15"
@@ -43,3 +48,12 @@ bytes = "1"
 
 # Futures utilities
 futures-util = "0.3"
+
+# Optimize dependencies even in dev builds (critical for pocket-tts / candle)
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
