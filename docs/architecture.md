@@ -112,14 +112,19 @@ Routing done via `pactl move-sink-input` after first cpal stream starts.
 
 ## Phase Roadmap
 
-### Phase 1: CLI Pipeline ← CURRENT
+### Phase 1: CLI Pipeline ✅ COMPLETE (Feb 2026)
 Replicate `prototype/test_deepgram.py` in Rust.
-- `cargo run` → speak Romanian → hear English on speakers
-- Voice clone with Oliver's voice
-- Same accumulator logic, same latency target (~2-2.5s)
-- Parallel translation with ordered output
+- `cargo run --release` → speak Romanian → hear English on speakers
+- Voice clone with Oliver's voice (pre-computed .safetensors)
+- Accumulator: 3w first flush, 5w subsequent, 1.5s timeout
+- Parallel translation (3 concurrent, ordered output)
+- Dual STT: Parakeet TDT v3 (local, production) + Deepgram (dev)
+- Silero VAD V5 for speech detection + smart flush + overlap buffer
+- Streaming TTS playback with 150ms pre-buffer
+- Virtual audio routing to Google Meet via PulseAudio
 
-Deliverable: working CLI binary, same behavior as Python prototype.
+Deliverable: working CLI binary. End-to-end latency ~2-3s.
+See `docs/phase1-complete.md` for full technical decisions.
 
 ### Phase 2: Virtual Audio Devices
 - Create PulseAudio null-sinks on startup, remove on exit
