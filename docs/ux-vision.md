@@ -300,11 +300,28 @@ Accesibil din ⚙ în header. Organizat pe tab-uri sau secțiuni:
 ## Comportamente importante
 
 ### Auto Virtual Audio
-La pornirea traducerii, app-ul:
+
+**Linux**: App-ul creează virtual audio singur prin PulseAudio — zero instalare extra.
 1. Verifică dacă talkye_out, talkye_combined, talkye_mic există
-2. Dacă nu → le creează automat (pactl load-module)
+2. Dacă nu → le creează automat (`pactl load-module`)
 3. Afișează notificare: "Set your video call mic to Talkye_Mic"
 4. La oprire: opțional cleanup (sau lasă pentru sesiunea următoare)
+
+**macOS**: Necesită BlackHole (open source MIT, ~1MB) ca virtual audio driver.
+1. La onboarding, dacă BlackHole nu e detectat:
+   - "Talkye needs a virtual audio driver for video calls"
+   - Descarcă BlackHole installer automat
+   - Lansează instalarea (necesită parolă admin — inevitabil pe macOS pentru drivere audio)
+   - Verifică instalarea → continuă onboarding
+2. După instalare, app-ul configurează routing-ul automat (ca pe Linux)
+3. Krisp, Loom, și alte app-uri similare fac exact la fel
+
+### Voice Clone Flow
+1. User apasă "Record Voice" în onboarding (sau Settings → Voice)
+2. Vorbește 10 secunde — app-ul salvează `.wav` local
+3. App-ul rulează `precompute_voice` (Rust, prin FFI) pe `.wav` → `.safetensors`
+4. Vocea e clonată — se încarcă instant (~720ms) la fiecare start
+5. Userul poate avea mai multe voci salvate și poate schimba oricând
 
 ### Error Handling vizibil
 - Mic deconectat → banner roșu "Microphone disconnected"
@@ -343,3 +360,66 @@ La pornirea traducerii, app-ul:
 - Multiple language pairs simultane
 - Mobile app
 - Browser extension
+
+---
+
+## Distribuție și Platforme
+
+### Installer
+
+**Linux**: `.AppImage` (universal, un singur fișier, dublu-click și merge)
+- Alternativ: `.deb` pentru Ubuntu/Debian
+- Include: Flutter app + Rust shared library (`.so`)
+- NU include modelele mari — se descarcă la prima rulare
+
+**macOS**: `.dmg` standard (drag to Applications)
+- Include: Flutter app + Rust shared library (`.dylib`)
+- NU include modelele mari — se descarcă la prima rulare
+- BlackHole installer inclus sau descărcat automat la onboarding
+
+### Model Download la Prima Rulare
+
+Installer-ul e mic (~50-80MB). Modelele se descarcă la onboarding:
+
+| Model | Size | Când |
+|---|---|---|
+| Parakeet TDT v3 (STT) | ~2.4GB | Onboarding step 3 (obligatoriu) |
+| Silero VAD | ~2.2MB | Inclus în installer (mic) |
+| Pocket TTS (model base) | ~50MB | Inclus în installer |
+
+Onboarding step 3 (Audio Check) include progress bar pentru download:
+```
+  Downloading speech engine...
+  ████████████░░░░░░░░  1.4 GB / 2.4 GB  (58%)
+  ~2 minutes remaining
+```
+
+Modelele se salvează în:
+- Linux: `~/.local/share/talkye-meet/models/`
+- macOS: `~/Library/Application Support/talkye-meet/models/`
+
+### Cross-Platform Compatibility
+
+| Component | Linux | macOS |
+|---|---|---|
+| Rust core engine | ✅ | ✅ |
+| cpal (audio I/O) | ✅ ALSA/PipeWire | ✅ CoreAudio |
+| ONNX Runtime (STT+VAD) | ✅ | ✅ |
+| pocket-tts (TTS) | ✅ | ✅ CPU |
+| Groq API (traducere) | ✅ | ✅ |
+| Flutter desktop | ✅ | ✅ |
+| flutter_rust_bridge | ✅ | ✅ |
+| Virtual audio | PulseAudio (automat) | BlackHole (install o dată) |
+
+### Build Pipeline
+
+```
+flutter build linux   → binary + libs → AppImage
+flutter build macos   → .app bundle   → .dmg
+
+Rust core compilat ca shared library:
+  Linux:  libtalkye_core.so
+  macOS:  libtalkye_core.dylib
+
+Conectat prin flutter_rust_bridge (FFI, code-gen automat)
+```
