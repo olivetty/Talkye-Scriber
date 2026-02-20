@@ -30,6 +30,9 @@ serde_json = "1"
 # Note: mkl feature causes hgemm_ linker error on Linux. Using native CPU opts instead.
 pocket-tts = "0.6"
 
+# Local STT — NVIDIA Parakeet TDT v3 (25 EU languages, ONNX Runtime)
+parakeet-rs = "0.3"
+
 # Tensor ops (used by precompute_voice binary)
 candle-core = "0.9"
 

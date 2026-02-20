@@ -13,11 +13,14 @@ pub struct Config {
     pub accumulator: AccumulatorConfig,
 }
 
+#[derive(Clone)]
 pub struct SttConfig {
-    pub api_key: String,
+    pub backend: String,
+    pub api_key: Option<String>,
     pub language: String,
     pub endpointing_ms: u32,
     pub utterance_end_ms: u32,
+    pub parakeet_model: Option<String>,
 }
 
 pub struct TranslateConfig {
@@ -63,10 +66,12 @@ impl Config {
 
         Ok(Self {
             stt: SttConfig {
-                api_key: env_required("DEEPGRAM_API_KEY")?,
+                backend: env_single("STT_BACKEND", "deepgram"),
+                api_key: env_optional_single("DEEPGRAM_API_KEY"),
                 language: env_or("STT_LANGUAGE", "DICTATE_LANGUAGE", "ro"),
                 endpointing_ms: env_parse("DEEPGRAM_ENDPOINTING", 500),
                 utterance_end_ms: env_parse("DEEPGRAM_UTTERANCE_END", 1500),
+                parakeet_model: env_optional_single("PARAKEET_MODEL"),
             },
             translate: TranslateConfig {
                 api_key: env_required("GROQ_API_KEY")?,

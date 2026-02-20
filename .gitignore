@@ -32,6 +32,7 @@ Thumbs.db
 # Models (large files)
 prototype/models/*.onnx
 !prototype/models/.gitkeep
+models/
 
 # Voice samples (keep originals)
 # prototype/voices/ is tracked

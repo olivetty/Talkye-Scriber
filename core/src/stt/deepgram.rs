@@ -11,41 +11,20 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::audio::AudioChunk;
 use crate::config::SttConfig;
-
-/// Events emitted by the STT client.
-#[derive(Debug, Clone)]
-pub enum SttEvent {
-    /// Interim (partial) transcript — may change.
-    Interim(String),
-    /// Final transcript for a phrase.
-    Final {
-        transcript: String,
-        words: Vec<SttWord>,
-        speech_final: bool,
-    },
-    /// Utterance ended (long silence).
-    UtteranceEnd,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct SttWord {
-    pub word: String,
-    pub start: f64,
-    pub end: f64,
-}
+use super::{SttEvent, SttWord};
 
 /// Streaming STT client for Deepgram.
-pub struct SttClient {
+pub struct DeepgramStt {
     api_key: String,
     language: String,
     endpointing_ms: u32,
     utterance_end_ms: u32,
 }
 
-impl SttClient {
+impl DeepgramStt {
     pub fn new(config: &SttConfig) -> Self {
         Self {
-            api_key: config.api_key.clone(),
+            api_key: config.api_key.clone().unwrap_or_default(),
             language: config.language.clone(),
             endpointing_ms: config.endpointing_ms,
             utterance_end_ms: config.utterance_end_ms,

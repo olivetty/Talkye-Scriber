@@ -13,7 +13,7 @@ use tokio::sync::{mpsc, Semaphore};
 use crate::audio::capture::AudioCapture;
 use crate::audio::playback::AudioPlayback;
 use crate::config::Config;
-use crate::stt::{SttClient, SttEvent};
+use crate::stt::{SttEvent, run_stt};
 use crate::translate::Translator;
 use crate::tts::TtsEngine;
 
@@ -55,10 +55,10 @@ impl Pipeline {
         });
 
         // ── STT ──
-        let stt = SttClient::new(&self.config.stt);
+        let stt_config = self.config.stt.clone();
         tokio::spawn(async move {
-            tracing::info!("[STT] task started");
-            if let Err(e) = stt.run(audio_rx, stt_tx).await {
+            tracing::info!("[STT] task started (backend={})", stt_config.backend);
+            if let Err(e) = run_stt(&stt_config, audio_rx, stt_tx).await {
                 tracing::error!("[STT] fatal: {e:#}");
             }
             tracing::warn!("[STT] task exited");

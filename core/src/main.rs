@@ -8,7 +8,11 @@ async fn main() -> Result<()> {
     dotenvy::from_path(project_root.join(".env")).ok();
 
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
+        .with_env_filter(
+            EnvFilter::from_default_env()
+                .add_directive("ort=warn".parse().unwrap())
+                .add_directive("hf_hub=warn".parse().unwrap())
+        )
         .init();
 
     tracing::info!("Talkye Meet — starting translation engine");
