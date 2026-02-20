@@ -22,6 +22,8 @@ pub enum EngineEvent {
     Transcript { original: String, translated: String },
     /// Non-fatal error.
     Error { message: String },
+    /// Debug log for UI dev panel.
+    Log { level: String, message: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

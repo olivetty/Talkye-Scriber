@@ -37,6 +37,9 @@ async fn main() -> Result<()> {
                 talkye_core::EngineEvent::Error { message } => {
                     tracing::warn!("[EVENT] error: {message}");
                 }
+                talkye_core::EngineEvent::Log { .. } => {
+                    // Already logged by pipeline via tracing
+                }
             }
         }
     });

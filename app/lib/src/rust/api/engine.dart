@@ -8,9 +8,12 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'engine.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `get_engine`
+// These functions are ignored because they are not marked as `pub`: `env_fb`, `opt`, `resolve_path`, `running_flag`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`
 
 /// Start the translation engine. Events stream to `sink`.
+/// Pipeline runs in a dedicated thread with its own tokio runtime.
+/// Blocks until pipeline exits (via stop or error).
 Stream<FfiEngineEvent> startEngine({required FfiEngineConfig config}) =>
     RustLib.instance.api.crateApiEngineStartEngine(config: config);
 
@@ -39,7 +42,6 @@ FfiModelStatus checkModels({
   voicePath: voicePath,
 );
 
-/// Audio device info.
 class FfiAudioDevice {
   final String name;
   final bool isDefault;
@@ -139,9 +141,12 @@ sealed class FfiEngineEvent with _$FfiEngineEvent {
   }) = FfiEngineEvent_Transcript;
   const factory FfiEngineEvent.error({required String message}) =
       FfiEngineEvent_Error;
+  const factory FfiEngineEvent.log({
+    required String level,
+    required String message,
+  }) = FfiEngineEvent_Log;
 }
 
-/// Model readiness status.
 class FfiModelStatus {
   final bool sttReady;
   final String sttPath;

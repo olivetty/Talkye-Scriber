@@ -55,13 +55,14 @@ extension FfiEngineEventPatterns on FfiEngineEvent {
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( FfiEngineEvent_StatusChanged value)?  statusChanged,TResult Function( FfiEngineEvent_Transcript value)?  transcript,TResult Function( FfiEngineEvent_Error value)?  error,required TResult orElse(),}){
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( FfiEngineEvent_StatusChanged value)?  statusChanged,TResult Function( FfiEngineEvent_Transcript value)?  transcript,TResult Function( FfiEngineEvent_Error value)?  error,TResult Function( FfiEngineEvent_Log value)?  log,required TResult orElse(),}){
 final _that = this;
 switch (_that) {
 case FfiEngineEvent_StatusChanged() when statusChanged != null:
 return statusChanged(_that);case FfiEngineEvent_Transcript() when transcript != null:
 return transcript(_that);case FfiEngineEvent_Error() when error != null:
-return error(_that);case _:
+return error(_that);case FfiEngineEvent_Log() when log != null:
+return log(_that);case _:
   return orElse();
 
 }
@@ -79,13 +80,14 @@ return error(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( FfiEngineEvent_StatusChanged value)  statusChanged,required TResult Function( FfiEngineEvent_Transcript value)  transcript,required TResult Function( FfiEngineEvent_Error value)  error,}){
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( FfiEngineEvent_StatusChanged value)  statusChanged,required TResult Function( FfiEngineEvent_Transcript value)  transcript,required TResult Function( FfiEngineEvent_Error value)  error,required TResult Function( FfiEngineEvent_Log value)  log,}){
 final _that = this;
 switch (_that) {
 case FfiEngineEvent_StatusChanged():
 return statusChanged(_that);case FfiEngineEvent_Transcript():
 return transcript(_that);case FfiEngineEvent_Error():
-return error(_that);}
+return error(_that);case FfiEngineEvent_Log():
+return log(_that);}
 }
 /// A variant of `map` that fallback to returning `null`.
 ///
@@ -99,13 +101,14 @@ return error(_that);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( FfiEngineEvent_StatusChanged value)?  statusChanged,TResult? Function( FfiEngineEvent_Transcript value)?  transcript,TResult? Function( FfiEngineEvent_Error value)?  error,}){
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( FfiEngineEvent_StatusChanged value)?  statusChanged,TResult? Function( FfiEngineEvent_Transcript value)?  transcript,TResult? Function( FfiEngineEvent_Error value)?  error,TResult? Function( FfiEngineEvent_Log value)?  log,}){
 final _that = this;
 switch (_that) {
 case FfiEngineEvent_StatusChanged() when statusChanged != null:
 return statusChanged(_that);case FfiEngineEvent_Transcript() when transcript != null:
 return transcript(_that);case FfiEngineEvent_Error() when error != null:
-return error(_that);case _:
+return error(_that);case FfiEngineEvent_Log() when log != null:
+return log(_that);case _:
   return null;
 
 }
@@ -122,12 +125,13 @@ return error(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( String status)?  statusChanged,TResult Function( String original,  String translated)?  transcript,TResult Function( String message)?  error,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( String status)?  statusChanged,TResult Function( String original,  String translated)?  transcript,TResult Function( String message)?  error,TResult Function( String level,  String message)?  log,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case FfiEngineEvent_StatusChanged() when statusChanged != null:
 return statusChanged(_that.status);case FfiEngineEvent_Transcript() when transcript != null:
 return transcript(_that.original,_that.translated);case FfiEngineEvent_Error() when error != null:
-return error(_that.message);case _:
+return error(_that.message);case FfiEngineEvent_Log() when log != null:
+return log(_that.level,_that.message);case _:
   return orElse();
 
 }
@@ -145,12 +149,13 @@ return error(_that.message);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( String status)  statusChanged,required TResult Function( String original,  String translated)  transcript,required TResult Function( String message)  error,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( String status)  statusChanged,required TResult Function( String original,  String translated)  transcript,required TResult Function( String message)  error,required TResult Function( String level,  String message)  log,}) {final _that = this;
 switch (_that) {
 case FfiEngineEvent_StatusChanged():
 return statusChanged(_that.status);case FfiEngineEvent_Transcript():
 return transcript(_that.original,_that.translated);case FfiEngineEvent_Error():
-return error(_that.message);}
+return error(_that.message);case FfiEngineEvent_Log():
+return log(_that.level,_that.message);}
 }
 /// A variant of `when` that fallback to returning `null`
 ///
@@ -164,12 +169,13 @@ return error(_that.message);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( String status)?  statusChanged,TResult? Function( String original,  String translated)?  transcript,TResult? Function( String message)?  error,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( String status)?  statusChanged,TResult? Function( String original,  String translated)?  transcript,TResult? Function( String message)?  error,TResult? Function( String level,  String message)?  log,}) {final _that = this;
 switch (_that) {
 case FfiEngineEvent_StatusChanged() when statusChanged != null:
 return statusChanged(_that.status);case FfiEngineEvent_Transcript() when transcript != null:
 return transcript(_that.original,_that.translated);case FfiEngineEvent_Error() when error != null:
-return error(_that.message);case _:
+return error(_that.message);case FfiEngineEvent_Log() when log != null:
+return log(_that.level,_that.message);case _:
   return null;
 
 }
@@ -370,6 +376,74 @@ class _$FfiEngineEvent_ErrorCopyWithImpl<$Res>
 @pragma('vm:prefer-inline') $Res call({Object? message = null,}) {
   return _then(FfiEngineEvent_Error(
 message: null == message ? _self.message : message // ignore: cast_nullable_to_non_nullable
+as String,
+  ));
+}
+
+
+}
+
+/// @nodoc
+
+
+class FfiEngineEvent_Log extends FfiEngineEvent {
+  const FfiEngineEvent_Log({required this.level, required this.message}): super._();
+  
+
+ final  String level;
+ final  String message;
+
+/// Create a copy of FfiEngineEvent
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$FfiEngineEvent_LogCopyWith<FfiEngineEvent_Log> get copyWith => _$FfiEngineEvent_LogCopyWithImpl<FfiEngineEvent_Log>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is FfiEngineEvent_Log&&(identical(other.level, level) || other.level == level)&&(identical(other.message, message) || other.message == message));
+}
+
+
+@override
+int get hashCode => Object.hash(runtimeType,level,message);
+
+@override
+String toString() {
+  return 'FfiEngineEvent.log(level: $level, message: $message)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $FfiEngineEvent_LogCopyWith<$Res> implements $FfiEngineEventCopyWith<$Res> {
+  factory $FfiEngineEvent_LogCopyWith(FfiEngineEvent_Log value, $Res Function(FfiEngineEvent_Log) _then) = _$FfiEngineEvent_LogCopyWithImpl;
+@useResult
+$Res call({
+ String level, String message
+});
+
+
+
+
+}
+/// @nodoc
+class _$FfiEngineEvent_LogCopyWithImpl<$Res>
+    implements $FfiEngineEvent_LogCopyWith<$Res> {
+  _$FfiEngineEvent_LogCopyWithImpl(this._self, this._then);
+
+  final FfiEngineEvent_Log _self;
+  final $Res Function(FfiEngineEvent_Log) _then;
+
+/// Create a copy of FfiEngineEvent
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? level = null,Object? message = null,}) {
+  return _then(FfiEngineEvent_Log(
+level: null == level ? _self.level : level // ignore: cast_nullable_to_non_nullable
+as String,message: null == message ? _self.message : message // ignore: cast_nullable_to_non_nullable
 as String,
   ));
 }

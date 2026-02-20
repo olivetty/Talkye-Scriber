@@ -529,6 +529,14 @@ impl SseDecode for crate::api::engine::FfiEngineEvent {
                     message: var_message,
                 };
             }
+            3 => {
+                let mut var_level = <String>::sse_decode(deserializer);
+                let mut var_message = <String>::sse_decode(deserializer);
+                return crate::api::engine::FfiEngineEvent::Log {
+                    level: var_level,
+                    message: var_message,
+                };
+            }
             _ => {
                 unimplemented!("");
             }
@@ -718,6 +726,12 @@ impl flutter_rust_bridge::IntoDart for crate::api::engine::FfiEngineEvent {
             crate::api::engine::FfiEngineEvent::Error { message } => {
                 [2.into_dart(), message.into_into_dart().into_dart()].into_dart()
             }
+            crate::api::engine::FfiEngineEvent::Log { level, message } => [
+                3.into_dart(),
+                level.into_into_dart().into_dart(),
+                message.into_into_dart().into_dart(),
+            ]
+            .into_dart(),
             _ => {
                 unimplemented!("");
             }
@@ -850,6 +864,11 @@ impl SseEncode for crate::api::engine::FfiEngineEvent {
             }
             crate::api::engine::FfiEngineEvent::Error { message } => {
                 <i32>::sse_encode(2, serializer);
+                <String>::sse_encode(message, serializer);
+            }
+            crate::api::engine::FfiEngineEvent::Log { level, message } => {
+                <i32>::sse_encode(3, serializer);
+                <String>::sse_encode(level, serializer);
                 <String>::sse_encode(message, serializer);
             }
             _ => {

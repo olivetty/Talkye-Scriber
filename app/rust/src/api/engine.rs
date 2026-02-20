@@ -24,6 +24,7 @@ pub enum FfiEngineEvent {
     StatusChanged { status: String },
     Transcript { original: String, translated: String },
     Error { message: String },
+    Log { level: String, message: String },
 }
 
 pub struct FfiAudioDevice {
@@ -211,6 +212,9 @@ pub fn start_engine(config: FfiEngineConfig, sink: StreamSink<FfiEngineEvent>) {
                         }
                         talkye_core::EngineEvent::Error { message } => {
                             FfiEngineEvent::Error { message }
+                        }
+                        talkye_core::EngineEvent::Log { level, message } => {
+                            FfiEngineEvent::Log { level, message }
                         }
                     };
                     if sink_fwd.add(ffi).is_err() { break; }

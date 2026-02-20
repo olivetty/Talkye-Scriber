@@ -505,6 +505,11 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         );
       case 2:
         return FfiEngineEvent_Error(message: dco_decode_String(raw[1]));
+      case 3:
+        return FfiEngineEvent_Log(
+          level: dco_decode_String(raw[1]),
+          message: dco_decode_String(raw[2]),
+        );
       default:
         throw Exception("unreachable");
     }
@@ -669,6 +674,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       case 2:
         var var_message = sse_decode_String(deserializer);
         return FfiEngineEvent_Error(message: var_message);
+      case 3:
+        var var_level = sse_decode_String(deserializer);
+        var var_message = sse_decode_String(deserializer);
+        return FfiEngineEvent_Log(level: var_level, message: var_message);
       default:
         throw UnimplementedError('');
     }
@@ -857,6 +866,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_String(translated, serializer);
       case FfiEngineEvent_Error(message: final message):
         sse_encode_i_32(2, serializer);
+        sse_encode_String(message, serializer);
+      case FfiEngineEvent_Log(level: final level, message: final message):
+        sse_encode_i_32(3, serializer);
+        sse_encode_String(level, serializer);
         sse_encode_String(message, serializer);
     }
   }

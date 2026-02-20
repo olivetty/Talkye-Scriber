@@ -35,17 +35,30 @@ impl Pipeline {
         Self { config, event_tx, running }
     }
 
+    /// Emit a log to both tracing and the UI event stream.
+    fn log(&self, level: &str, msg: String) {
+        match level {
+            "ERROR" => tracing::error!("{msg}"),
+            "WARN" => tracing::warn!("{msg}"),
+            _ => tracing::info!("{msg}"),
+        }
+        let _ = self.event_tx.try_send(EngineEvent::Log {
+            level: level.to_string(),
+            message: msg,
+        });
+    }
+
     pub async fn run(&self) -> Result<()> {
-        tracing::info!(
-            "Pipeline: STT (lang={}, endpointing={}ms) → Translate ({} → {}) → TTS (voice={}, speed={}x)",
-            self.config.stt.language, self.config.stt.endpointing_ms,
+        self.log("INFO", format!(
+            "Pipeline: STT (lang={}, backend={}) → Translate ({} → {}) → TTS (voice={}, speed={}x)",
+            self.config.stt.language, self.config.stt.backend,
             self.config.translate.from_lang, self.config.translate.to_lang,
             self.config.tts.voice, self.config.tts.speed,
-        );
-        tracing::info!(
+        ));
+        self.log("INFO", format!(
             "Accumulator: first flush at {}w, then {}w",
             self.config.accumulator.first_words, self.config.accumulator.min_words,
-        );
+        ));
 
         // ── Channels ──
         let (audio_tx, audio_rx) = mpsc::channel(64);
@@ -118,12 +131,12 @@ impl Pipeline {
         let mut seq: u64 = 0;
         let flush_timeout = tokio::time::Duration::from_millis(1500);
 
-        tracing::info!("[ACCUM] loop started, waiting for STT events");
+        self.log("INFO", "[ACCUM] loop started, waiting for STT events".into());
 
         loop {
             // Check stop signal
             if !self.running.load(Ordering::Relaxed) {
-                tracing::info!("[ACCUM] stop signal received");
+                self.log("INFO", "[ACCUM] stop signal received".into());
                 break;
             }
 
@@ -144,7 +157,7 @@ impl Pipeline {
                     Err(_) => {
                         if let Some(text) = accum.timeout_flush() {
                             let wc = text.split_whitespace().count();
-                            tracing::info!("[ACCUM] ⏰ timeout flush seq={seq} ({wc}w): \"{text}\"");
+                            self.log("INFO", format!("[ACCUM] ⏰ timeout flush seq={seq} ({wc}w): \"{text}\""));
                             let _ = translate_tx.send((text, seq)).await;
                             seq += 1;
                         }
@@ -155,27 +168,27 @@ impl Pipeline {
 
             match event {
                 SttEvent::Interim(text) => {
-                    tracing::info!("[ACCUM] ... interim: \"{text}\"");
+                    self.log("INFO", format!("[STT] interim: \"{text}\""));
                 }
                 SttEvent::Final { transcript, words, speech_final } => {
-                    tracing::info!(
-                        "[ACCUM] ✓ final: \"{transcript}\" speech_final={speech_final} words={}",
+                    self.log("INFO", format!(
+                        "[STT] ✓ final: \"{transcript}\" speech_final={speech_final} words={}",
                         words.len()
-                    );
+                    ));
                     let word_texts: Vec<String> = words.iter().map(|w| w.word.clone()).collect();
 
                     if let Some(text) = accum.add_words(word_texts, speech_final) {
                         let wc = text.split_whitespace().count();
-                        tracing::info!("[ACCUM] → flush seq={seq} ({wc}w): \"{text}\"");
+                        self.log("INFO", format!("[ACCUM] → flush seq={seq} ({wc}w): \"{text}\""));
                         let _ = translate_tx.send((text, seq)).await;
                         seq += 1;
                     }
                 }
                 SttEvent::UtteranceEnd => {
-                    tracing::info!("[ACCUM] ── utterance end ── (accum={}w)", accum.word_count());
+                    self.log("INFO", format!("[ACCUM] ── utterance end ── (accum={}w)", accum.word_count()));
                     if let Some(text) = accum.utterance_end() {
                         let wc = text.split_whitespace().count();
-                        tracing::info!("[ACCUM] → flush seq={seq} ({wc}w): \"{text}\"");
+                        self.log("INFO", format!("[ACCUM] → flush seq={seq} ({wc}w): \"{text}\""));
                         let _ = translate_tx.send((text, seq)).await;
                         seq += 1;
                     }
@@ -268,7 +281,11 @@ impl Pipeline {
                 match translator.translate(&text).await {
                     Ok(translated) => {
                         let ms = t0.elapsed().as_millis();
-                        tracing::info!("[TRANSLATE] seq={seq} done in {ms}ms: \"{translated}\"");
+                        let log_msg = format!("[TRANSLATE] seq={seq} ({ms}ms): \"{text}\" → \"{translated}\"");
+                        tracing::info!("{log_msg}");
+                        let _ = event_tx.send(EngineEvent::Log {
+                            level: "INFO".into(), message: log_msg,
+                        }).await;
 
                         let mut map = pending.lock().await;
                         map.insert(seq, (text.clone(), translated));
