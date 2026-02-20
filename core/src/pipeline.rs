@@ -68,10 +68,16 @@ impl Pipeline {
 
         // ── Audio capture (blocking thread) ──
         let capture = AudioCapture::new(&self.config.audio)?;
+        self.log("INFO", "[CAPTURE] audio device opened".into());
+        let capture_evt = self.event_tx.clone();
         tokio::task::spawn_blocking(move || {
-            tracing::info!("[CAPTURE] thread started");
+            let _ = capture_evt.try_send(EngineEvent::Log {
+                level: "INFO".into(), message: "[CAPTURE] thread started".into(),
+            });
             if let Err(e) = capture.start(audio_tx) {
-                tracing::error!("[CAPTURE] fatal: {e:#}");
+                let _ = capture_evt.try_send(EngineEvent::Log {
+                    level: "ERROR".into(), message: format!("[CAPTURE] fatal: {e:#}"),
+                });
             }
         });
 
@@ -101,25 +107,59 @@ impl Pipeline {
             speed: self.config.tts.speed,
             output_device: self.config.tts.output_device.clone(),
         };
+        let tts_event_tx = self.event_tx.clone();
         std::thread::spawn(move || {
-            tracing::info!("[TTS] thread started");
+            let log = |level: &str, msg: String| {
+                match level {
+                    "ERROR" => tracing::error!("{msg}"),
+                    "WARN" => tracing::warn!("{msg}"),
+                    _ => tracing::info!("{msg}"),
+                }
+                let _ = tts_event_tx.try_send(EngineEvent::Log {
+                    level: level.to_string(), message: msg,
+                });
+            };
+
+            log("INFO", "[TTS] thread started".into());
+            log("INFO", format!("[TTS] loading voice: {}", tts_config.voice));
+
             let tts = match TtsEngine::new(&tts_config) {
-                Ok(t) => t,
-                Err(e) => { tracing::error!("[TTS] init failed: {e:#}"); return; }
+                Ok(t) => {
+                    log("INFO", format!("[TTS] ✅ model loaded (sr={})", t.sample_rate()));
+                    t
+                }
+                Err(e) => {
+                    log("ERROR", format!("[TTS] ❌ init failed: {e:#}"));
+                    let _ = tts_event_tx.try_send(EngineEvent::Error {
+                        message: format!("TTS init failed: {e:#}"),
+                    });
+                    return;
+                }
             };
             let mut playback = match AudioPlayback::new(tts_config.output_device.as_deref()) {
-                Ok(p) => p,
-                Err(e) => { tracing::error!("[TTS] playback init failed: {e:#}"); return; }
+                Ok(p) => {
+                    log("INFO", format!("[TTS] ✅ playback ready (output={:?})", tts_config.output_device));
+                    p
+                }
+                Err(e) => {
+                    log("ERROR", format!("[TTS] ❌ playback init failed: {e:#}"));
+                    let _ = tts_event_tx.try_send(EngineEvent::Error {
+                        message: format!("TTS playback init failed: {e:#}"),
+                    });
+                    return;
+                }
             };
 
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all().build().unwrap();
 
             rt.block_on(async {
-                tracing::info!("[TTS] ready, waiting for messages");
+                log("INFO", "[TTS] ready, waiting for messages".into());
                 while let Some(text) = tts_rx.recv().await {
-                    Self::speak(&tts, &mut playback, &mut tts_rx, text);
+                    log("INFO", format!("[TTS] 🔊 received: \"{text}\""));
+                    Self::speak_with_log(&tts, &mut playback, &mut tts_rx, text, &tts_event_tx);
                 }
+                log("INFO", "[TTS] channel closed, thread exiting".into());
             });
         });
 
@@ -199,13 +239,24 @@ impl Pipeline {
         Ok(())
     }
 
-    /// Drain queued messages, split clauses, generate TTS, play.
-    fn speak(
+    /// Drain queued messages, split clauses, generate TTS, play — with UI logging.
+    fn speak_with_log(
         tts: &TtsEngine,
         playback: &mut AudioPlayback,
         rx: &mut mpsc::Receiver<String>,
         text: String,
+        event_tx: &mpsc::Sender<EngineEvent>,
     ) {
+        let log = |level: &str, msg: String| {
+            match level {
+                "ERROR" => tracing::error!("{msg}"),
+                _ => tracing::info!("{msg}"),
+            }
+            let _ = event_tx.try_send(EngineEvent::Log {
+                level: level.to_string(), message: msg,
+            });
+        };
+
         // Drain queued messages — never drop content
         let mut combined = text;
         let mut drained = 0u32;
@@ -215,17 +266,17 @@ impl Pipeline {
             drained += 1;
         }
         if drained > 0 {
-            tracing::info!("[TTS] ⏩ merged {drained} queued message(s)");
+            log("INFO", format!("[TTS] ⏩ merged {drained} queued message(s)"));
         }
 
         let clauses = accumulator::split_clauses(&combined);
         let n = clauses.len();
-        tracing::info!("[TTS] 🔊 \"{combined}\" [{n} clause(s)]");
+        log("INFO", format!("[TTS] 🔊 \"{combined}\" [{n} clause(s)]"));
 
         let stream = match playback.stream(tts.playback_rate()) {
             Ok(s) => s,
             Err(e) => {
-                tracing::error!("[TTS] playback stream error: {e:#}");
+                log("ERROR", format!("[TTS] playback stream error: {e:#}"));
                 return;
             }
         };
@@ -235,7 +286,7 @@ impl Pipeline {
         let mut first = true;
 
         for (i, clause) in clauses.iter().enumerate() {
-            tracing::info!("[TTS] generating clause {}/{n}: \"{clause}\"", i + 1);
+            log("INFO", format!("[TTS] generating clause {}/{n}: \"{clause}\"", i + 1));
             match tts.generate_stream(clause, |chunk| {
                 if first {
                     first_chunk_ms = t0.elapsed().as_millis() as u64;
@@ -244,14 +295,14 @@ impl Pipeline {
                 stream.push(chunk);
             }) {
                 Ok((fc, tot)) => {
-                    tracing::info!("[TTS]   clause {}/{n} done: fc={fc}ms tot={tot}ms", i + 1);
+                    log("INFO", format!("[TTS] clause {}/{n} done: fc={fc}ms tot={tot}ms", i + 1));
                 }
-                Err(e) => tracing::error!("[TTS] clause {}/{n} error: {e:#}", i + 1),
+                Err(e) => log("ERROR", format!("[TTS] clause {}/{n} error: {e:#}", i + 1)),
             }
         }
 
         let total_ms = t0.elapsed().as_millis();
-        tracing::info!("[TTS] ✅ total: first_chunk={first_chunk_ms}ms total={total_ms}ms");
+        log("INFO", format!("[TTS] ✅ total: first_chunk={first_chunk_ms}ms total={total_ms}ms"));
         stream.finish();
     }
 
