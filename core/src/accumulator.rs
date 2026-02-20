@@ -137,3 +137,140 @@ pub fn split_clauses(text: &str) -> Vec<String> {
         clauses
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn words(s: &str) -> Vec<String> {
+        s.split_whitespace().map(|w| w.to_string()).collect()
+    }
+
+    #[test]
+    fn first_flush_at_threshold() {
+        let mut acc = Accumulator::new(&AccumulatorConfig { first_words: 4, min_words: 6 });
+        // 3 words — below first threshold
+        assert!(acc.add_words(words("one two three"), false).is_none());
+        assert_eq!(acc.word_count(), 3);
+        // 2 more — now 5, above first threshold of 4
+        let result = acc.add_words(words("four five"), false);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), "one two three four five");
+        assert_eq!(acc.word_count(), 0);
+    }
+
+    #[test]
+    fn subsequent_flush_uses_min_words() {
+        let mut acc = Accumulator::new(&AccumulatorConfig { first_words: 2, min_words: 5 });
+        // First flush at 2
+        let r = acc.add_words(words("hello world"), false);
+        assert!(r.is_some());
+        // Now subsequent threshold is 5
+        assert!(acc.add_words(words("a b c"), false).is_none());
+        assert_eq!(acc.word_count(), 3);
+        let r = acc.add_words(words("d e"), false);
+        assert!(r.is_some());
+        assert_eq!(r.unwrap(), "a b c d e");
+    }
+
+    #[test]
+    fn speech_final_forces_flush() {
+        let mut acc = Accumulator::new(&AccumulatorConfig { first_words: 10, min_words: 10 });
+        let r = acc.add_words(words("just two"), true);
+        assert!(r.is_some());
+        assert_eq!(r.unwrap(), "just two");
+    }
+
+    #[test]
+    fn speech_final_resets_first_flushed() {
+        let mut acc = Accumulator::new(&AccumulatorConfig { first_words: 2, min_words: 8 });
+        // First flush
+        acc.add_words(words("hello world"), false);
+        // Now min_words=8 applies
+        assert!(acc.add_words(words("a b c"), false).is_none());
+        // speech_final resets
+        acc.add_words(words("d"), true);
+        // Next flush should use first_words=2 again
+        let r = acc.add_words(words("new sentence"), false);
+        assert!(r.is_some());
+    }
+
+    #[test]
+    fn utterance_end_flushes_and_resets() {
+        let mut acc = Accumulator::new(&AccumulatorConfig { first_words: 10, min_words: 10 });
+        acc.add_words(words("partial"), false);
+        let r = acc.utterance_end();
+        assert_eq!(r.unwrap(), "partial");
+        assert_eq!(acc.word_count(), 0);
+        // first_flushed should be reset — next uses first_words
+        let r = acc.add_words(words("new start here yes"), false);
+        // first_words=10, so 4 words shouldn't flush
+        assert!(r.is_none());
+    }
+
+    #[test]
+    fn utterance_end_empty_returns_none() {
+        let mut acc = Accumulator::new(&AccumulatorConfig { first_words: 4, min_words: 6 });
+        assert!(acc.utterance_end().is_none());
+    }
+
+    #[test]
+    fn timeout_flush() {
+        let mut acc = Accumulator::new(&AccumulatorConfig { first_words: 10, min_words: 10 });
+        acc.add_words(words("trailing words"), false);
+        let r = acc.timeout_flush();
+        assert_eq!(r.unwrap(), "trailing words");
+        assert_eq!(acc.word_count(), 0);
+    }
+
+    #[test]
+    fn timeout_flush_empty_returns_none() {
+        let mut acc = Accumulator::new(&AccumulatorConfig { first_words: 4, min_words: 6 });
+        assert!(acc.timeout_flush().is_none());
+    }
+
+    // ── split_clauses tests ──
+
+    #[test]
+    fn split_no_delimiters() {
+        assert_eq!(split_clauses("hello world"), vec!["hello world"]);
+    }
+
+    #[test]
+    fn split_at_comma() {
+        let r = split_clauses("hello world, how are you, I am fine");
+        assert_eq!(r.len(), 2); // "hello world" merged with "how are you" (3w min), then "I am fine"
+    }
+
+    #[test]
+    fn split_merges_short_clauses() {
+        // "a, b, c d e f" — "a" is too short, merges with "b", still short, merges with "c d e f"
+        let r = split_clauses("a, b, c d e f");
+        assert_eq!(r.len(), 1);
+    }
+
+    #[test]
+    fn split_semicolon_and_colon() {
+        let r = split_clauses("first part here; second part here: third part here");
+        assert!(r.len() >= 2);
+    }
+
+    #[test]
+    fn split_empty_string() {
+        let r = split_clauses("");
+        assert_eq!(r, vec![""]);
+    }
+
+    #[test]
+    fn split_preserves_all_words() {
+        let input = "the weather is beautiful today, let's go outside and enjoy, maybe visit the park";
+        let clauses = split_clauses(input);
+        let rejoined: String = clauses.join(" ");
+        // All words should be present
+        for word in input.split_whitespace() {
+            let clean = word.trim_matches(',');
+            assert!(rejoined.contains(clean), "missing word: {clean}");
+        }
+    }
+}

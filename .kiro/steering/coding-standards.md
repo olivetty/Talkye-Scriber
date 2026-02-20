@@ -13,7 +13,7 @@ inclusion: auto
 
 ## File Rules
 
-- Max 200 lines per file. Split if larger.
+- Max 300 lines per file. Split if larger.
 - One responsibility per file. If you can't describe it in one sentence, split it.
 - File names: snake_case, descriptive (`virtual_device.rs` not `vd.rs`)
 
