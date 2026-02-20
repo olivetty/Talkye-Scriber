@@ -1,12 +1,14 @@
-//! Pocket TTS wrapper — voice cloning, streaming, CPU-only.
+//! Pocket TTS — voice cloning, streaming, CPU-only.
 //!
-//! Uses the `pocket-tts` crate (v0.6.x) for text-to-speech with voice cloning.
-//! The model runs locally on CPU — no API costs, no rate limits.
+//! Wraps the pocket-tts crate for text-to-speech with voice cloning.
+//! Reference: prototype/test_deepgram.py init_pocket() + speak_pocket().
 
 use anyhow::{Context, Result};
 use std::time::Instant;
 
-/// TTS engine wrapping Pocket TTS.
+use crate::config::TtsConfig;
+
+/// TTS engine with voice cloning support.
 pub struct TtsEngine {
     model: pocket_tts::TTSModel,
     voice_state: pocket_tts::ModelState,
@@ -15,12 +17,8 @@ pub struct TtsEngine {
 }
 
 impl TtsEngine {
-    /// Load the TTS model and prepare voice state.
-    ///
-    /// `voice` can be:
-    /// - A built-in voice name (e.g., "alba")
-    /// - A path to a .wav file for voice cloning
-    pub fn new(voice: &str, speed: f32) -> Result<Self> {
+    /// Load model and voice. `voice` is a built-in name or path to .wav.
+    pub fn new(config: &TtsConfig) -> Result<Self> {
         let t0 = Instant::now();
         let model = pocket_tts::TTSModel::load("default")
             .context("Failed to load Pocket TTS model")?;
@@ -28,43 +26,20 @@ impl TtsEngine {
 
         let t1 = Instant::now();
         let voice_state = model
-            .get_voice_state(voice)
+            .get_voice_state(&config.voice)
             .context("Failed to load voice")?;
         let voice_ms = t1.elapsed().as_millis();
 
         let sample_rate = model.sample_rate;
         tracing::info!(
-            "Pocket TTS loaded in {load_ms}ms + voice '{voice}' in {voice_ms}ms (sr={sample_rate})"
+            "TTS loaded in {load_ms}ms + voice '{}' in {voice_ms}ms (sr={sample_rate})",
+            config.voice
         );
 
-        Ok(Self {
-            model,
-            voice_state,
-            sample_rate,
-            speed,
-        })
+        Ok(Self { model, voice_state, sample_rate, speed: config.speed })
     }
 
-    /// Generate speech audio for the given text.
-    ///
-    /// Returns PCM samples as `Vec<f32>` at `self.sample_rate`.
-    pub fn generate(&self, text: &str) -> Result<Vec<f32>> {
-        let mut samples = Vec::new();
-        for chunk_result in self.model.generate_stream(text, &self.voice_state) {
-            let tensor = chunk_result.map_err(|e| anyhow::anyhow!("{e}"))?;
-            let chunk_data: Vec<f32> = tensor
-                .flatten_all()
-                .map_err(|e| anyhow::anyhow!("{e}"))?
-                .to_vec1()
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
-            samples.extend(chunk_data);
-        }
-        Ok(samples)
-    }
-
-    /// Stream speech audio chunk by chunk.
-    ///
-    /// Calls `on_chunk` with each PCM f32 chunk as it's generated.
+    /// Stream TTS, calling `on_chunk` with each PCM f32 chunk.
     /// Returns (first_chunk_ms, total_ms).
     pub fn generate_stream(
         &self,
@@ -77,16 +52,14 @@ impl TtsEngine {
 
         for chunk_result in self.model.generate_stream(text, &self.voice_state) {
             let tensor = chunk_result.map_err(|e| anyhow::anyhow!("{e}"))?;
-            let chunk_data: Vec<f32> = tensor
-                .flatten_all()
-                .map_err(|e| anyhow::anyhow!("{e}"))?
-                .to_vec1()
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let data: Vec<f32> = tensor
+                .flatten_all().map_err(|e| anyhow::anyhow!("{e}"))?
+                .to_vec1().map_err(|e| anyhow::anyhow!("{e}"))?;
             if first {
                 first_chunk_ms = t0.elapsed().as_millis() as u64;
                 first = false;
             }
-            on_chunk(&chunk_data);
+            on_chunk(&data);
         }
 
         let total_ms = t0.elapsed().as_millis() as u64;
@@ -97,7 +70,7 @@ impl TtsEngine {
         self.sample_rate
     }
 
-    /// Effective playback sample rate (adjusted for speed).
+    /// Playback rate adjusted for speed.
     pub fn playback_rate(&self) -> u32 {
         (self.sample_rate as f32 * self.speed) as u32
     }

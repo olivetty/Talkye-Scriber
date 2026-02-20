@@ -13,7 +13,8 @@ async fn main() -> Result<()> {
 
     tracing::info!("Talkye Meet — starting translation engine");
 
-    let pipeline = talkye_core::Pipeline::new()?;
+    let config = talkye_core::Config::from_env()?;
+    let pipeline = talkye_core::Pipeline::new(config);
     pipeline.run().await?;
 
     Ok(())
