@@ -31,6 +31,10 @@ const SILENCE_TRIGGER_MS: u64 = 600;
 /// Maximum buffer duration before forced transcription (ms).
 const MAX_BUFFER_MS: u64 = 8000;
 
+/// Periodic flush during active speech — prevents huge batches (ms).
+/// Similar to Deepgram's endpointing: transcribe every ~2.5s even without silence.
+const PERIODIC_FLUSH_MS: u64 = 2500;
+
 /// Interval for emitting interim results (ms).
 const INTERIM_INTERVAL_MS: u64 = 1500;
 
@@ -100,6 +104,23 @@ async fn run_vad_loop(
                 silence_start = None;
             }
             audio_buf.extend_from_slice(&samples);
+
+            // Periodic flush during continuous speech — prevents huge batches
+            let buffer_ms = (audio_buf.len() as u64 * 1000) / 16000;
+            if buffer_ms >= PERIODIC_FLUSH_MS {
+                tracing::info!(
+                    "[STT-PARAKEET] periodic flush ({buffer_ms}ms of active speech)"
+                );
+                if let Some(text) = transcribe_buffer(&mut model, &audio_buf) {
+                    if !text.is_empty() {
+                        emit_final(&event_tx, &text, false).await;
+                    }
+                }
+                audio_buf.clear();
+                // Keep speech_active=true, reset speech_start for next interval
+                speech_start = Some(Instant::now());
+                last_interim = Instant::now();
+            }
         } else if speech_active {
             // Still accumulating during short silence
             audio_buf.extend_from_slice(&samples);

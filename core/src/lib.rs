@@ -2,6 +2,7 @@
 //!
 //! Pipeline: Audio Capture → Deepgram STT → LLM Translate → Pocket TTS → Playback
 
+pub mod accumulator;
 pub mod audio;
 pub mod config;
 pub mod pipeline;

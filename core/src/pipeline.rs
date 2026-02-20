@@ -1,7 +1,7 @@
 //! Pipeline orchestration — STT → Accumulator → Translate → TTS → Playback.
 //!
 //! Mirrors prototype/test_deepgram.py architecture:
-//! - Accumulator with dual threshold (4w first, 8w subsequent)
+//! - Accumulator with dual threshold (4w first, then min_words)
 //! - Parallel translation (3 concurrent) with ordered output
 //! - Sequential TTS playback (never drop audio)
 
@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Semaphore};
 
+use crate::accumulator::{self, Accumulator};
 use crate::audio::capture::AudioCapture;
 use crate::audio::playback::AudioPlayback;
 use crate::config::Config;
@@ -51,7 +52,6 @@ impl Pipeline {
             if let Err(e) = capture.start(audio_tx) {
                 tracing::error!("[CAPTURE] fatal: {e:#}");
             }
-            tracing::warn!("[CAPTURE] thread exited");
         });
 
         // ── STT ──
@@ -61,7 +61,6 @@ impl Pipeline {
             if let Err(e) = run_stt(&stt_config, audio_rx, stt_tx).await {
                 tracing::error!("[STT] fatal: {e:#}");
             }
-            tracing::warn!("[STT] task exited");
         });
 
         // ── Parallel translator with ordered output ──
@@ -72,7 +71,6 @@ impl Pipeline {
         tokio::spawn(async move {
             tracing::info!("[TRANSLATE] task started");
             Self::ordered_translator(translate_rx, tts_tx_ordered, translator, semaphore).await;
-            tracing::warn!("[TRANSLATE] task exited");
         });
 
         // ── TTS playback (blocking thread) ──
@@ -98,71 +96,23 @@ impl Pipeline {
             rt.block_on(async {
                 tracing::info!("[TTS] ready, waiting for messages");
                 while let Some(text) = tts_rx.recv().await {
-                    // Drain queued messages and concatenate — never drop content.
-                    let mut combined = text;
-                    let mut drained = 0u32;
-                    while let Ok(next) = tts_rx.try_recv() {
-                        combined.push_str(". ");
-                        combined.push_str(&next);
-                        drained += 1;
-                    }
-                    if drained > 0 {
-                        tracing::info!("[TTS] ⏩ merged {drained} queued message(s)");
-                    }
-
-                    let clauses = split_clauses(&combined);
-                    let n = clauses.len();
-                    tracing::info!("[TTS] 🔊 \"{combined}\" [{n} clause(s)]");
-
-                    let stream = match playback.stream(tts.playback_rate()) {
-                        Ok(s) => s,
-                        Err(e) => {
-                            tracing::error!("[TTS] playback stream error: {e:#}");
-                            continue;
-                        }
-                    };
-
-                    let t0 = std::time::Instant::now();
-                    let mut first_chunk_ms = 0u64;
-                    let mut first = true;
-
-                    for (i, clause) in clauses.iter().enumerate() {
-                        tracing::info!("[TTS] generating clause {}/{n}: \"{clause}\"", i + 1);
-                        match tts.generate_stream(clause, |chunk| {
-                            if first {
-                                first_chunk_ms = t0.elapsed().as_millis() as u64;
-                                first = false;
-                            }
-                            stream.push(chunk);
-                        }) {
-                            Ok((fc, tot)) => {
-                                tracing::info!("[TTS]   clause {}/{n} done: fc={fc}ms tot={tot}ms", i + 1);
-                            }
-                            Err(e) => tracing::error!("[TTS] clause {}/{n} error: {e:#}", i + 1),
-                        }
-                    }
-
-                    let total_ms = t0.elapsed().as_millis();
-                    tracing::info!("[TTS] ✅ total: first_chunk={first_chunk_ms}ms total={total_ms}ms");
-                    stream.finish();
-                    tracing::info!("[TTS] playback drained, ready for next");
+                    Self::speak(&tts, &mut playback, &mut tts_rx, text);
                 }
-                tracing::warn!("[TTS] channel closed, exiting");
             });
-            tracing::warn!("[TTS] thread exited");
         });
 
         // ── Accumulator loop ──
-        let mut accum_words: Vec<String> = Vec::new();
-        let mut first_flushed = false;
+        let mut accum = Accumulator::new(&accumulator::AccumulatorConfig {
+            first_words: self.config.accumulator.first_words,
+            min_words: self.config.accumulator.min_words,
+        });
         let mut seq: u64 = 0;
         let flush_timeout = tokio::time::Duration::from_millis(1500);
 
         tracing::info!("[ACCUM] loop started, waiting for STT events");
 
         loop {
-            // Wait for next event OR timeout if we have buffered words
-            let event = if accum_words.is_empty() {
+            let event = if !accum.has_words() {
                 match stt_rx.recv().await {
                     Some(e) => e,
                     None => break,
@@ -170,91 +120,106 @@ impl Pipeline {
             } else {
                 match tokio::time::timeout(flush_timeout, stt_rx.recv()).await {
                     Ok(Some(e)) => e,
-                    Ok(None) => break, // channel closed
+                    Ok(None) => break,
                     Err(_) => {
-                        // Timeout — flush buffered words
-                        let text = accum_words.join(" ");
-                        accum_words.clear();
-                        let wc = text.split_whitespace().count();
-                        tracing::info!("[ACCUM] ⏰ timeout flush seq={seq} ({wc}w): \"{text}\"");
-
-                        match translate_tx.send((text, seq)).await {
-                            Ok(()) => tracing::info!("[ACCUM] → translate_tx.send(seq={seq}) OK"),
-                            Err(e) => tracing::error!("[ACCUM] → translate_tx.send(seq={seq}) FAILED: {e}"),
+                        if let Some(text) = accum.timeout_flush() {
+                            let wc = text.split_whitespace().count();
+                            tracing::info!("[ACCUM] ⏰ timeout flush seq={seq} ({wc}w): \"{text}\"");
+                            let _ = translate_tx.send((text, seq)).await;
+                            seq += 1;
                         }
-                        seq += 1;
                         continue;
                     }
                 }
             };
+
             match event {
                 SttEvent::Interim(text) => {
                     tracing::info!("[ACCUM] ... interim: \"{text}\"");
                 }
                 SttEvent::Final { transcript, words, speech_final } => {
-                    let wc = words.len();
                     tracing::info!(
-                        "[ACCUM] ✓ final: \"{transcript}\" speech_final={speech_final} words={wc} accum_before={}",
-                        accum_words.len()
+                        "[ACCUM] ✓ final: \"{transcript}\" speech_final={speech_final} words={}",
+                        words.len()
                     );
-
                     let word_texts: Vec<String> = words.iter().map(|w| w.word.clone()).collect();
-                    accum_words.extend(word_texts);
 
-                    let threshold = if !first_flushed {
-                        self.config.accumulator.first_words
-                    } else {
-                        self.config.accumulator.min_words
-                    };
-
-                    tracing::info!(
-                        "[ACCUM] accum_after={} threshold={} first_flushed={first_flushed}",
-                        accum_words.len(), threshold
-                    );
-
-                    if accum_words.len() >= threshold || speech_final {
-                        let text = accum_words.join(" ");
-                        accum_words.clear();
-                        first_flushed = true;
-
+                    if let Some(text) = accum.add_words(word_texts, speech_final) {
                         let wc = text.split_whitespace().count();
                         tracing::info!("[ACCUM] → flush seq={seq} ({wc}w): \"{text}\"");
-
-                        match translate_tx.send((text, seq)).await {
-                            Ok(()) => tracing::info!("[ACCUM] → translate_tx.send(seq={seq}) OK"),
-                            Err(e) => tracing::error!("[ACCUM] → translate_tx.send(seq={seq}) FAILED: {e}"),
-                        }
+                        let _ = translate_tx.send((text, seq)).await;
                         seq += 1;
-
-                        if speech_final {
-                            first_flushed = false;
-                            tracing::info!("[ACCUM] speech_final → reset first_flushed");
-                        }
-                    } else {
-                        tracing::info!("[ACCUM] buffering ({} < {threshold})", accum_words.len());
                     }
                 }
                 SttEvent::UtteranceEnd => {
-                    tracing::info!("[ACCUM] ── utterance end ── (accum={}w)", accum_words.len());
-                    if !accum_words.is_empty() {
-                        let text = accum_words.join(" ");
-                        accum_words.clear();
+                    tracing::info!("[ACCUM] ── utterance end ── (accum={}w)", accum.word_count());
+                    if let Some(text) = accum.utterance_end() {
                         let wc = text.split_whitespace().count();
                         tracing::info!("[ACCUM] → flush seq={seq} ({wc}w): \"{text}\"");
-
-                        match translate_tx.send((text, seq)).await {
-                            Ok(()) => tracing::info!("[ACCUM] → translate_tx.send(seq={seq}) OK"),
-                            Err(e) => tracing::error!("[ACCUM] → translate_tx.send(seq={seq}) FAILED: {e}"),
-                        }
+                        let _ = translate_tx.send((text, seq)).await;
                         seq += 1;
                     }
-                    first_flushed = false;
                 }
             }
         }
 
-        tracing::warn!("[ACCUM] stt_rx closed, pipeline ending");
         Ok(())
+    }
+
+    /// Drain queued messages, split clauses, generate TTS, play.
+    fn speak(
+        tts: &TtsEngine,
+        playback: &mut AudioPlayback,
+        rx: &mut mpsc::Receiver<String>,
+        text: String,
+    ) {
+        // Drain queued messages — never drop content
+        let mut combined = text;
+        let mut drained = 0u32;
+        while let Ok(next) = rx.try_recv() {
+            combined.push_str(". ");
+            combined.push_str(&next);
+            drained += 1;
+        }
+        if drained > 0 {
+            tracing::info!("[TTS] ⏩ merged {drained} queued message(s)");
+        }
+
+        let clauses = accumulator::split_clauses(&combined);
+        let n = clauses.len();
+        tracing::info!("[TTS] 🔊 \"{combined}\" [{n} clause(s)]");
+
+        let stream = match playback.stream(tts.playback_rate()) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!("[TTS] playback stream error: {e:#}");
+                return;
+            }
+        };
+
+        let t0 = std::time::Instant::now();
+        let mut first_chunk_ms = 0u64;
+        let mut first = true;
+
+        for (i, clause) in clauses.iter().enumerate() {
+            tracing::info!("[TTS] generating clause {}/{n}: \"{clause}\"", i + 1);
+            match tts.generate_stream(clause, |chunk| {
+                if first {
+                    first_chunk_ms = t0.elapsed().as_millis() as u64;
+                    first = false;
+                }
+                stream.push(chunk);
+            }) {
+                Ok((fc, tot)) => {
+                    tracing::info!("[TTS]   clause {}/{n} done: fc={fc}ms tot={tot}ms", i + 1);
+                }
+                Err(e) => tracing::error!("[TTS] clause {}/{n} error: {e:#}", i + 1),
+            }
+        }
+
+        let total_ms = t0.elapsed().as_millis();
+        tracing::info!("[TTS] ✅ total: first_chunk={first_chunk_ms}ms total={total_ms}ms");
+        stream.finish();
     }
 
     /// Translate fragments in parallel (max 3), output to TTS in sequence order.
@@ -269,7 +234,6 @@ impl Pipeline {
         let next_seq = Arc::new(tokio::sync::Mutex::new(0u64));
 
         while let Some((text, seq)) = rx.recv().await {
-            tracing::info!("[TRANSLATE] received seq={seq}: \"{text}\"");
             let translator = translator.clone();
             let semaphore = semaphore.clone();
             let pending = pending.clone();
@@ -277,10 +241,7 @@ impl Pipeline {
             let tx = tx.clone();
 
             tokio::spawn(async move {
-                tracing::info!("[TRANSLATE] seq={seq} waiting for semaphore");
                 let _permit = semaphore.acquire().await.unwrap();
-                tracing::info!("[TRANSLATE] seq={seq} translating...");
-
                 let t0 = std::time::Instant::now();
                 match translator.translate(&text).await {
                     Ok(translated) => {
@@ -291,76 +252,18 @@ impl Pipeline {
                         map.insert(seq, translated);
 
                         let mut next = next_seq.lock().await;
-                        tracing::info!(
-                            "[TRANSLATE] seq={seq} next_seq={} pending={:?}",
-                            *next, map.keys().collect::<Vec<_>>()
-                        );
-
                         while let Some(result) = map.remove(&*next) {
-                            tracing::info!("[TRANSLATE] → tts_tx.send(seq={}) start", *next);
-                            match tx.send(result).await {
-                                Ok(()) => tracing::info!("[TRANSLATE] → tts_tx.send(seq={}) OK", *next),
-                                Err(e) => tracing::error!("[TRANSLATE] → tts_tx.send(seq={}) FAILED: {e}", *next),
-                            }
+                            let _ = tx.send(result).await;
                             *next += 1;
                         }
                     }
                     Err(e) => {
                         tracing::error!("[TRANSLATE] seq={seq} error: {e:#}");
                         let mut next = next_seq.lock().await;
-                        if *next == seq {
-                            tracing::warn!("[TRANSLATE] skipping failed seq={seq}");
-                            *next += 1;
-                        }
+                        if *next == seq { *next += 1; }
                     }
                 }
             });
         }
-    }
-}
-
-/// Split text into clauses at natural boundaries for lower TTS latency.
-/// Minimum 3 words per clause to avoid overhead from tiny fragments.
-fn split_clauses(text: &str) -> Vec<String> {
-    const MIN_WORDS: usize = 3;
-
-    let parts: Vec<&str> = text.split(|c: char| matches!(c, ',' | ';' | ':' | '—' | '–')).collect();
-
-    if parts.len() <= 1 {
-        return vec![text.to_string()];
-    }
-
-    let mut clauses: Vec<String> = Vec::new();
-    let mut current = String::new();
-
-    for part in parts {
-        let trimmed = part.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if current.is_empty() {
-            current = trimmed.to_string();
-        } else if current.split_whitespace().count() < MIN_WORDS {
-            current.push(' ');
-            current.push_str(trimmed);
-        } else {
-            clauses.push(current);
-            current = trimmed.to_string();
-        }
-    }
-    if !current.is_empty() {
-        if current.split_whitespace().count() < MIN_WORDS && !clauses.is_empty() {
-            let last = clauses.last_mut().unwrap();
-            last.push(' ');
-            last.push_str(&current);
-        } else {
-            clauses.push(current);
-        }
-    }
-
-    if clauses.is_empty() {
-        vec![text.to_string()]
-    } else {
-        clauses
     }
 }

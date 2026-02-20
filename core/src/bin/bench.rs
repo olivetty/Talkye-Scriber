@@ -120,7 +120,7 @@ fn main() -> Result<()> {
     println!("│ whole      │ {:>7}ms  │ {:>7}ms  │ 1            │", first_ms, total);
 
     // Split at clauses
-    let clauses = split_clauses(long_en);
+    let clauses = talkye_core::accumulator::split_clauses(long_en);
     let n = clauses.len();
     let t = Instant::now();
     let mut first_ms = 0u64;
@@ -138,37 +138,4 @@ fn main() -> Result<()> {
     println!();
 
     Ok(())
-}
-
-/// Split text into clauses at natural boundaries.
-/// Minimum 3 words per clause to avoid overhead.
-fn split_clauses(text: &str) -> Vec<String> {
-    const MIN_WORDS: usize = 3;
-    let parts: Vec<&str> = text.split(|c: char| matches!(c, ',' | ';' | ':' | '—' | '–')).collect();
-    if parts.len() <= 1 { return vec![text.to_string()]; }
-
-    let mut clauses: Vec<String> = Vec::new();
-    let mut current = String::new();
-    for part in parts {
-        let trimmed = part.trim();
-        if trimmed.is_empty() { continue; }
-        if current.is_empty() {
-            current = trimmed.to_string();
-        } else if current.split_whitespace().count() < MIN_WORDS {
-            current.push(' ');
-            current.push_str(trimmed);
-        } else {
-            clauses.push(current);
-            current = trimmed.to_string();
-        }
-    }
-    if !current.is_empty() {
-        if current.split_whitespace().count() < MIN_WORDS && !clauses.is_empty() {
-            clauses.last_mut().unwrap().push(' ');
-            clauses.last_mut().unwrap().push_str(&current);
-        } else {
-            clauses.push(current);
-        }
-    }
-    if clauses.is_empty() { vec![text.to_string()] } else { clauses }
 }
