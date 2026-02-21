@@ -1,6 +1,7 @@
 #include "my_application.h"
 
 #include <flutter_linux/flutter_linux.h>
+#include <unistd.h>
 #ifdef GDK_WINDOWING_X11
 #include <gdk/gdkx.h>
 #endif
@@ -45,14 +46,54 @@ static void my_application_activate(GApplication* application) {
   if (use_header_bar) {
     GtkHeaderBar* header_bar = GTK_HEADER_BAR(gtk_header_bar_new());
     gtk_widget_show(GTK_WIDGET(header_bar));
-    gtk_header_bar_set_title(header_bar, "talkye_app");
+    gtk_header_bar_set_title(header_bar, "Talkye Meet");
     gtk_header_bar_set_show_close_button(header_bar, TRUE);
     gtk_window_set_titlebar(window, GTK_WIDGET(header_bar));
   } else {
-    gtk_window_set_title(window, "talkye_app");
+    gtk_window_set_title(window, "Talkye Meet");
   }
 
-  gtk_window_set_default_size(window, 1280, 720);
+  // Set window icon — resolve relative to the executable location
+  {
+    g_autoptr(GError) icon_error = nullptr;
+    // Get path to executable, icon is installed next to it
+    g_autofree gchar* exe_path = g_file_read_link("/proc/self/exe", nullptr);
+    if (exe_path != nullptr) {
+      g_autofree gchar* exe_dir = g_path_get_dirname(exe_path);
+      g_autofree gchar* icon_path = g_build_filename(exe_dir, "talkye-meet.png", nullptr);
+      GdkPixbuf* icon = gdk_pixbuf_new_from_file(icon_path, &icon_error);
+      if (icon == nullptr) {
+        // flutter run: binary is in intermediates_do_not_run/, icon is in bundle/
+        g_clear_error(&icon_error);
+        g_autofree gchar* parent = g_path_get_dirname(exe_dir);
+        icon_path = g_build_filename(parent, "bundle", "talkye-meet.png", nullptr);
+        icon = gdk_pixbuf_new_from_file(icon_path, &icon_error);
+      }
+      if (icon != nullptr) {
+        gtk_window_set_icon(window, icon);
+        // Also set as default icon for all windows (affects dock on X11)
+        gtk_window_set_default_icon(icon);
+        g_object_unref(icon);
+      }
+    }
+  }
+
+  // Narrow fixed window — no resize, compact translator feel
+  gtk_window_set_default_size(window, 400, 700);
+  gtk_window_set_resizable(window, FALSE);
+  gtk_widget_set_size_request(GTK_WIDGET(window), 400, 700);
+
+  // Position: top-right corner of primary monitor
+  GdkDisplay* display = gdk_display_get_default();
+  GdkMonitor* monitor = gdk_display_get_primary_monitor(display);
+  if (monitor == nullptr) {
+    monitor = gdk_display_get_monitor(display, 0);
+  }
+  if (monitor != nullptr) {
+    GdkRectangle geom;
+    gdk_monitor_get_geometry(monitor, &geom);
+    gtk_window_move(window, geom.x + geom.width - 420, geom.y + 40);
+  }
 
   g_autoptr(FlDartProject) project = fl_dart_project_new();
   fl_dart_project_set_dart_entrypoint_arguments(

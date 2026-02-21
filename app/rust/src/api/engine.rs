@@ -144,6 +144,8 @@ pub fn start_engine(config: FfiEngineConfig, sink: StreamSink<FfiEngineEvent>) {
             std::env::set_var("HF_TOKEN", &hf_token);
         }
 
+        let voice_resolved = resolve_path(&voice);
+
         let core_config = talkye_core::Config {
             stt: talkye_core::config::SttConfig {
                 backend: if stt_backend.is_empty() { "parakeet".into() } else { stt_backend },
@@ -158,12 +160,13 @@ pub fn start_engine(config: FfiEngineConfig, sink: StreamSink<FfiEngineEvent>) {
                 api_key: groq_key.clone(),
                 model: "llama-3.3-70b-versatile".to_string(),
                 from_lang: if from_lang.is_empty() { "Romanian".into() } else { from_lang },
-                to_lang: if to_lang.is_empty() { "English".into() } else { to_lang },
+                to_lang: if to_lang.is_empty() { "English".into() } else { to_lang.clone() },
             },
             tts: talkye_core::config::TtsConfig {
-                voice: resolve_path(&voice),
+                voice: voice_resolved,
                 speed,
                 output_device: opt(audio_output),
+                language: if to_lang.is_empty() { "English".into() } else { to_lang },
             },
             audio: talkye_core::config::AudioConfig {
                 source: None,

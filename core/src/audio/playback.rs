@@ -1,11 +1,10 @@
-//! Audio playback via cpal — streaming with pre-buffering.
+//! Audio playback via cpal — stream-per-utterance design.
 //!
-//! Pre-buffers ~150ms of audio before starting drain to prevent underruns.
-//! Without pre-buffering, cpal callback writes silence (0.0) between TTS
-//! chunks, causing audible clicks/choppiness.
+//! A single cpal stream is reused across multiple TTS messages within the same
+//! utterance. The stream is only destroyed after an idle timeout (no new audio
+//! for 2s). This eliminates inter-message gaps entirely.
 //!
-//! Virtual sink routing: when `output_sink` is set, uses `pactl move-sink-input`
-//! to route audio to that PipeWire/PulseAudio sink.
+//! Virtual sink routing: done once per session, cached to avoid redundant pactl calls.
 
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -13,10 +12,12 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
 
 /// Pre-buffer duration before starting playback drain (seconds).
-/// Gives TTS headroom to stay ahead of the cpal callback.
-const PRE_BUFFER_SECS: f32 = 0.15;
+/// Only applies when creating a NEW session.
+const PRE_BUFFER_SECS: f32 = 0.12;
 
-/// Plays PCM audio on the default output device with streaming support.
+/// Gap between stream drop and next stream creation (ms).
+const INTER_STREAM_GAP_MS: u64 = 5;
+
 pub struct AudioPlayback {
     device: cpal::Device,
     output_sink: Option<String>,
@@ -30,19 +31,29 @@ impl AudioPlayback {
             .context("No default output device")?;
 
         let name = device.name().unwrap_or_else(|_| "unknown".into());
-        tracing::info!("Audio playback device: {name}");
-        if let Some(sink) = output_sink {
-            tracing::info!("Audio will be routed to PA sink: {sink}");
-        }
+        tracing::info!("[PLAYBACK] device: {name}");
 
-        Ok(Self {
-            device,
-            output_sink: output_sink.map(|s| s.to_string()),
-            routed: false,
-        })
+        let validated_sink = match output_sink {
+            Some(sink) if sink_exists(sink) => {
+                tracing::info!("[PLAYBACK] will route to PA sink: {sink}");
+                Some(sink.to_string())
+            }
+            Some(sink) => {
+                tracing::warn!("[PLAYBACK] sink '{sink}' not found — using default");
+                None
+            }
+            None => {
+                tracing::info!("[PLAYBACK] no virtual sink — direct to default device");
+                None
+            }
+        };
+
+        Ok(Self { device, output_sink: validated_sink, routed: false })
     }
 
-    pub fn stream(&mut self, sample_rate: u32) -> Result<PlaybackStream> {
+    /// Create a new playback session (one cpal stream).
+    /// Reuse this session across multiple TTS messages for gapless playback.
+    pub fn stream(&mut self, sample_rate: u32) -> Result<PlaybackSession> {
         let config = cpal::StreamConfig {
             channels: 1,
             sample_rate: cpal::SampleRate(sample_rate),
@@ -50,7 +61,9 @@ impl AudioPlayback {
         };
 
         let pre_buffer_samples = (sample_rate as f32 * PRE_BUFFER_SECS) as usize;
-        let buffer = Arc::new(Mutex::new(VecDeque::<f32>::with_capacity(sample_rate as usize)));
+        let buffer = Arc::new(Mutex::new(VecDeque::<f32>::with_capacity(
+            sample_rate as usize * 2,
+        )));
         let ready = Arc::new(AtomicBool::new(false));
         let done = Arc::new(AtomicBool::new(false));
         let drained = Arc::new(AtomicBool::new(false));
@@ -64,11 +77,9 @@ impl AudioPlayback {
             &config,
             move |output: &mut [f32], _: &cpal::OutputCallbackInfo| {
                 if !ready_cb.load(Ordering::Acquire) {
-                    // Pre-buffering — output silence until enough data accumulated
-                    for s in output.iter_mut() { *s = 0.0; }
+                    output.fill(0.0);
                     return;
                 }
-
                 let mut buf = buf_cb.lock().unwrap();
                 for sample in output.iter_mut() {
                     if let Some(s) = buf.pop_front() {
@@ -76,40 +87,136 @@ impl AudioPlayback {
                     } else {
                         *sample = 0.0;
                         if done_cb.load(Ordering::Relaxed) {
-                            drained_cb.store(true, Ordering::Relaxed);
+                            drained_cb.store(true, Ordering::Release);
                         }
                     }
                 }
             },
-            |err| tracing::error!("Playback error: {err}"),
+            |err| tracing::error!("[PLAYBACK] stream error: {err}"),
             None,
         ).context("Failed to build output stream")?;
 
         stream.play().context("Failed to start playback")?;
 
-        // Route to virtual sink once — PipeWire remembers for subsequent streams
-        if !self.routed {
-            if let Some(ref sink) = self.output_sink {
-                route_to_sink(sink);
-                self.routed = true;
-            }
+        // Route to virtual sink if configured
+        if let Some(ref sink) = self.output_sink {
+            route_to_sink(sink);
+            self.routed = true;
         }
 
-        Ok(PlaybackStream {
-            _stream: stream,
+        Ok(PlaybackSession {
+            stream: Some(stream),
             buffer,
             ready,
             done,
             drained,
             pre_buffer_samples,
+            sample_rate,
         })
     }
 }
 
-/// Route the most recent sink-input to the named PA/PipeWire sink.
-fn route_to_sink(sink_name: &str) {
-    std::thread::sleep(std::time::Duration::from_millis(30));
+/// A playback session tied to one cpal stream.
+/// Can be reused across multiple TTS messages for gapless playback.
+/// When dropped, the cpal stream is destroyed — clean hardware flush.
+pub struct PlaybackSession {
+    stream: Option<cpal::Stream>,
+    buffer: Arc<Mutex<VecDeque<f32>>>,
+    ready: Arc<AtomicBool>,
+    done: Arc<AtomicBool>,
+    drained: Arc<AtomicBool>,
+    pre_buffer_samples: usize,
+    sample_rate: u32,
+}
 
+impl PlaybackSession {
+    /// Push PCM f32 samples. Starts drain once pre-buffer threshold is met.
+    pub fn push(&self, samples: &[f32]) {
+        // Reset done/drained flags if we're pushing new data
+        // (session reuse across multiple TTS messages)
+        if self.done.load(Ordering::Relaxed) {
+            self.done.store(false, Ordering::Release);
+            self.drained.store(false, Ordering::Release);
+        }
+
+        let mut buf = self.buffer.lock().unwrap();
+        buf.extend(samples);
+        if !self.ready.load(Ordering::Relaxed) && buf.len() >= self.pre_buffer_samples {
+            self.ready.store(true, Ordering::Release);
+        }
+    }
+
+    /// Signal no more data for THIS message. Does NOT destroy the stream.
+    /// The stream keeps running (outputting silence) so the next message
+    /// can push directly without creating a new stream.
+    ///
+    /// Call `finish()` only when the utterance is truly over.
+    pub fn end_message(&self) {
+        // Ensure playback starts even if pre-buffer wasn't reached
+        self.ready.store(true, Ordering::Release);
+    }
+
+    /// Final shutdown: wait for drain, then destroy stream.
+    /// Call this when the utterance is over (idle timeout or explicit end).
+    pub fn finish(mut self) {
+        self.ready.store(true, Ordering::Release);
+        self.done.store(true, Ordering::Release);
+
+        // Dynamic timeout based on actual buffer size
+        let remaining = self.buffer.lock().map(|b| b.len()).unwrap_or(0);
+        let drain_ms = if remaining > 0 && self.sample_rate > 0 {
+            (remaining as u64 * 1000 / self.sample_rate as u64) + 300
+        } else {
+            200
+        };
+        let timeout_ms = drain_ms.min(2000);
+
+        let t0 = std::time::Instant::now();
+        while !self.drained.load(Ordering::Acquire) {
+            if t0.elapsed().as_millis() as u64 > timeout_ms {
+                let left = self.buffer.lock().map(|b| b.len()).unwrap_or(0);
+                if left > 0 {
+                    tracing::warn!(
+                        "[PLAYBACK] drain timeout ({timeout_ms}ms), {left} samples left — dropping"
+                    );
+                }
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
+        // Drop the stream — triggers clean PipeWire/ALSA flush
+        if let Some(s) = self.stream.take() {
+            drop(s);
+        }
+
+        // Minimal gap for PipeWire cleanup
+        std::thread::sleep(std::time::Duration::from_millis(INTER_STREAM_GAP_MS));
+    }
+}
+
+impl Drop for PlaybackSession {
+    fn drop(&mut self) {
+        if let Some(s) = self.stream.take() {
+            drop(s);
+        }
+    }
+}
+
+fn sink_exists(sink_name: &str) -> bool {
+    std::process::Command::new("pactl")
+        .args(["list", "short", "sinks"])
+        .output()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .any(|l| l.contains(sink_name))
+        })
+        .unwrap_or(false)
+}
+
+fn route_to_sink(sink_name: &str) {
+    std::thread::sleep(std::time::Duration::from_millis(50));
     let output = match std::process::Command::new("pactl")
         .args(["list", "short", "sink-inputs"])
         .output()
@@ -120,7 +227,6 @@ fn route_to_sink(sink_name: &str) {
             return;
         }
     };
-
     if let Some(last_line) = output.lines().last() {
         if let Some(id) = last_line.split_whitespace().next() {
             match std::process::Command::new("pactl")
@@ -128,50 +234,14 @@ fn route_to_sink(sink_name: &str) {
                 .output()
             {
                 Ok(o) if o.status.success() => {
-                    tracing::info!("[PLAYBACK] ✅ routed sink-input {id} → {sink_name}");
+                    tracing::info!("[PLAYBACK] routed sink-input {id} -> {sink_name}");
                 }
                 Ok(o) => {
                     let err = String::from_utf8_lossy(&o.stderr);
-                    tracing::warn!("[PLAYBACK] move-sink-input failed: {err}");
+                    tracing::warn!("[PLAYBACK] route failed: {err}");
                 }
-                Err(e) => tracing::warn!("[PLAYBACK] pactl move failed: {e}"),
+                Err(e) => tracing::warn!("[PLAYBACK] pactl error: {e}"),
             }
         }
-    }
-}
-
-/// A live streaming playback session with pre-buffering.
-pub struct PlaybackStream {
-    _stream: cpal::Stream,
-    buffer: Arc<Mutex<VecDeque<f32>>>,
-    ready: Arc<AtomicBool>,
-    done: Arc<AtomicBool>,
-    drained: Arc<AtomicBool>,
-    pre_buffer_samples: usize,
-}
-
-impl PlaybackStream {
-    /// Push PCM f32 samples. Triggers playback once pre-buffer threshold is met.
-    pub fn push(&self, samples: &[f32]) {
-        let mut buf = self.buffer.lock().unwrap();
-        buf.extend(samples);
-
-        // Start draining once we have enough buffered
-        if !self.ready.load(Ordering::Relaxed) && buf.len() >= self.pre_buffer_samples {
-            self.ready.store(true, Ordering::Release);
-            tracing::debug!("[PLAYBACK] pre-buffer filled ({}), starting drain", buf.len());
-        }
-    }
-
-    /// Signal no more data, wait for buffer to drain, then stop.
-    pub fn finish(self) {
-        // If we never hit pre-buffer threshold, start draining what we have
-        self.ready.store(true, Ordering::Release);
-        self.done.store(true, Ordering::Relaxed);
-
-        while !self.drained.load(Ordering::Relaxed) {
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-        std::thread::sleep(std::time::Duration::from_millis(30));
     }
 }

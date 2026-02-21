@@ -5,7 +5,11 @@ use tracing_subscriber::EnvFilter;
 async fn main() -> Result<()> {
     // Load .env from project root — uses compile-time path, works regardless of cwd
     let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-    dotenvy::from_path(project_root.join(".env")).ok();
+    let env_path = project_root.join(".env");
+    match dotenvy::from_path(&env_path) {
+        Ok(_) => eprintln!("[BOOT] .env loaded from {}", env_path.display()),
+        Err(e) => eprintln!("[BOOT] ⚠️ .env NOT loaded from {}: {e}", env_path.display()),
+    }
 
     tracing_subscriber::fmt()
         .with_env_filter(

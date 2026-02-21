@@ -27,14 +27,14 @@ fn main() -> Result<()> {
     print!("  [1/7] Config loading ... ");
     match talkye_core::Config::from_env() {
         Ok(_) => { println!("✅"); passed += 1; }
-        Err(e) => { println!("❌ {e}"); failed += 1; return Ok(()); }
+        Err(e) => { println!("❌ {e}"); return Ok(()); }
     };
     let config = talkye_core::Config::from_env()?;
 
     // ── 2. TTS model + voice load ──
     print!("  [2/7] TTS model + voice load ... ");
     let t0 = Instant::now();
-    match talkye_core::tts::TtsEngine::new(&config.tts) {
+    match talkye_core::tts::create_backend(&config.tts) {
         Ok(tts) => {
             let ms = t0.elapsed().as_millis();
             println!("✅ ({ms}ms, sr={})", tts.sample_rate());
@@ -45,7 +45,8 @@ fn main() -> Result<()> {
             let _t1 = Instant::now();
             let mut total_samples = 0usize;
             let mut chunks = 0u32;
-            match tts.generate_stream("Hello, this is a test.", |chunk| {
+            let tts_lang = &config.tts.language;
+            match tts.generate_stream("Hello, this is a test.", tts_lang, &mut |chunk| {
                 total_samples += chunk.len();
                 chunks += 1;
             }) {

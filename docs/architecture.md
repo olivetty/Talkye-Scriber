@@ -29,7 +29,9 @@ Downloadable app for Mac + Linux. $20/month subscription.
 │  vad.rs ─────── Silero VAD V5 neural voice activity detection   │
 │                                                                 │
 │  translate.rs ── Groq LLM translation with context window       │
-│  tts.rs ─────── Pocket TTS voice cloning (local CPU, free)      │
+│  tts/         ── Pocket TTS voice synthesis                     │
+│    mod.rs ──── TtsBackend trait + factory                       │
+│    pocket.rs ─ Pocket TTS (CPU, English, voice clone)           │
 │  pipeline.rs ── Orchestration: accumulator + parallel translate  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -157,7 +159,7 @@ Deliverable: installable desktop app.
 | Virtual devices | libpulse-binding | Programmatic PulseAudio control (Phase 2) |
 | Config format | .env (dotenvy) | Simple, proven, user edits one file |
 | Translation concurrency | 3 parallel + ordered | Reduces latency when multiple fragments queue up |
-| TTS engine | pocket-tts (Rust crate) | Voice cloning, streaming, CPU-only, MIT, $0 |
+| TTS engine | pocket-tts | CPU, English, voice clone, streaming, ~135ms first chunk |
 | STT (production) | parakeet-rs (Parakeet TDT v3) | Local, 25 EU langs, 600M params, ONNX, $0 |
 | VAD | Silero VAD V5 (ONNX) | Neural speech detection, 2.2MB, ~1ms/chunk |
 | STT (dev/testing) | Deepgram Nova-3 | Best streaming quality, good for comparison |
@@ -189,7 +191,8 @@ See `docs/local-stt-research.md` for full research.
 | `stt/parakeet.rs` | Local STT via parakeet-rs + Silero VAD | config, vad |
 | `vad.rs` | Silero VAD V5 neural voice activity detection | config |
 | `translate.rs` | Groq API: translate text with context window | config |
-| `tts.rs` | Pocket TTS: text → PCM stream with voice clone | config |
+| `tts/mod.rs` | TTS backend trait + factory | config |
+| `tts/pocket.rs` | Pocket TTS: CPU, English, streaming | config |
 | `pipeline.rs` | Wire everything: accumulator + parallel translate | all above |
 
 ## Prototype Mapping

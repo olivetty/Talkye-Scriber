@@ -50,6 +50,8 @@ impl AudioCapture {
         };
 
         let tx_clone = tx.clone();
+        let drop_count = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let drop_count_cb = drop_count.clone();
         let stream = self.device.build_input_stream(
             &stream_config,
             move |data: &[i16], _: &cpal::InputCallbackInfo| {
@@ -59,7 +61,9 @@ impl AudioCapture {
                     .flat_map(|s| s.to_le_bytes())
                     .collect();
                 // Non-blocking send — drop chunk if pipeline is behind
-                let _ = tx_clone.try_send(bytes);
+                if tx_clone.try_send(bytes).is_err() {
+                    drop_count_cb.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
             },
             |err| tracing::error!("Audio capture error: {err}"),
             None,
@@ -68,11 +72,15 @@ impl AudioCapture {
         stream.play().context("Failed to start audio capture")?;
         tracing::info!("Audio capture started (16kHz mono)");
 
-        // Keep stream alive until channel closes
+        // Keep stream alive until channel closes, log drops periodically
         loop {
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            std::thread::sleep(std::time::Duration::from_secs(5));
             if tx.is_closed() {
                 break;
+            }
+            let drops = drop_count.swap(0, std::sync::atomic::Ordering::Relaxed);
+            if drops > 0 {
+                tracing::warn!("[CAPTURE] ⚠️ dropped {drops} audio chunks (pipeline behind)");
             }
         }
 

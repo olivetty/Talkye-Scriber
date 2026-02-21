@@ -1,9 +1,9 @@
 //! Pipeline orchestration — STT → Accumulator → Translate → TTS → Playback.
 //!
 //! Mirrors prototype/test_deepgram.py architecture:
-//! - Accumulator with dual threshold (4w first, then min_words)
+//! - Accumulator with dual threshold (first flush fast, then min_words)
 //! - Parallel translation (3 concurrent) with ordered output
-//! - Sequential TTS playback (never drop audio)
+//! - Session-reuse playback: one cpal stream per utterance, not per message
 
 use anyhow::Result;
 use std::collections::BTreeMap;
@@ -18,7 +18,16 @@ use crate::config::Config;
 use crate::engine::EngineEvent;
 use crate::stt::{SttEvent, run_stt};
 use crate::translate::Translator;
-use crate::tts::TtsEngine;
+use crate::tts;
+
+/// Idle timeout before finishing a playback session (ms).
+/// If no new TTS message arrives within this window, the cpal stream is dropped.
+/// Must be longer than typical translate latency (~300-500ms) to bridge messages.
+const SESSION_IDLE_MS: u64 = 2000;
+
+/// Don't split into clauses if message is shorter than this (words).
+/// Short messages sound better as a single TTS unit.
+const CLAUSE_SPLIT_MIN_WORDS: usize = 12;
 
 pub struct Pipeline {
     config: Config,
@@ -35,7 +44,6 @@ impl Pipeline {
         Self { config, event_tx, running }
     }
 
-    /// Emit a log to both tracing and the UI event stream.
     fn log(&self, level: &str, msg: String) {
         match level {
             "ERROR" => tracing::error!("{msg}"),
@@ -49,6 +57,22 @@ impl Pipeline {
     }
 
     pub async fn run(&self) -> Result<()> {
+        // ── Ensure virtual audio devices are ready ──
+        if let Some(ref output) = self.config.tts.output_device {
+            if let Err(e) = crate::audio::r#virtual::ensure_virtual_audio(output) {
+                self.log("WARN", format!("[VIRTUAL] audio setup failed: {e:#} — TTS may not be audible"));
+            }
+        }
+
+        // ── Audio health watchdog (detects Bluetooth reconnect mid-session) ──
+        if let Some(ref output) = self.config.tts.output_device {
+            let sink = output.clone();
+            let flag = self.running.clone();
+            tokio::task::spawn_blocking(move || {
+                crate::audio::r#virtual::watch_audio_health(&sink, &flag);
+            });
+        }
+
         self.log("INFO", format!(
             "Pipeline: STT (lang={}, backend={}) → Translate ({} → {}) → TTS (voice={}, speed={}x)",
             self.config.stt.language, self.config.stt.backend,
@@ -61,10 +85,10 @@ impl Pipeline {
         ));
 
         // ── Channels ──
-        let (audio_tx, audio_rx) = mpsc::channel(64);
-        let (stt_tx, mut stt_rx) = mpsc::channel(64);
+        let (audio_tx, audio_rx) = mpsc::channel(256);
+        let (stt_tx, mut stt_rx) = mpsc::channel(128);
         let (translate_tx, translate_rx) = mpsc::channel::<(String, u64)>(32);
-        let (tts_tx, mut tts_rx) = mpsc::channel::<String>(32);
+        let (tts_tx, tts_rx) = mpsc::channel::<String>(32);
 
         // ── Audio capture (blocking thread) ──
         let capture = AudioCapture::new(&self.config.audio)?;
@@ -101,66 +125,16 @@ impl Pipeline {
             Self::ordered_translator(translate_rx, tts_tx_ordered, translator, semaphore, evt_translate).await;
         });
 
-        // ── TTS playback (blocking thread) ──
+        // ── TTS playback (blocking thread with session reuse) ──
         let tts_config = crate::config::TtsConfig {
             voice: self.config.tts.voice.clone(),
             speed: self.config.tts.speed,
             output_device: self.config.tts.output_device.clone(),
+            language: self.config.tts.language.clone(),
         };
         let tts_event_tx = self.event_tx.clone();
         std::thread::spawn(move || {
-            let log = |level: &str, msg: String| {
-                match level {
-                    "ERROR" => tracing::error!("{msg}"),
-                    "WARN" => tracing::warn!("{msg}"),
-                    _ => tracing::info!("{msg}"),
-                }
-                let _ = tts_event_tx.try_send(EngineEvent::Log {
-                    level: level.to_string(), message: msg,
-                });
-            };
-
-            log("INFO", "[TTS] thread started".into());
-            log("INFO", format!("[TTS] loading voice: {}", tts_config.voice));
-
-            let tts = match TtsEngine::new(&tts_config) {
-                Ok(t) => {
-                    log("INFO", format!("[TTS] ✅ model loaded (sr={})", t.sample_rate()));
-                    t
-                }
-                Err(e) => {
-                    log("ERROR", format!("[TTS] ❌ init failed: {e:#}"));
-                    let _ = tts_event_tx.try_send(EngineEvent::Error {
-                        message: format!("TTS init failed: {e:#}"),
-                    });
-                    return;
-                }
-            };
-            let mut playback = match AudioPlayback::new(tts_config.output_device.as_deref()) {
-                Ok(p) => {
-                    log("INFO", format!("[TTS] ✅ playback ready (output={:?})", tts_config.output_device));
-                    p
-                }
-                Err(e) => {
-                    log("ERROR", format!("[TTS] ❌ playback init failed: {e:#}"));
-                    let _ = tts_event_tx.try_send(EngineEvent::Error {
-                        message: format!("TTS playback init failed: {e:#}"),
-                    });
-                    return;
-                }
-            };
-
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all().build().unwrap();
-
-            rt.block_on(async {
-                log("INFO", "[TTS] ready, waiting for messages".into());
-                while let Some(text) = tts_rx.recv().await {
-                    log("INFO", format!("[TTS] 🔊 received: \"{text}\""));
-                    Self::speak_with_log(&tts, &mut playback, &mut tts_rx, text, &tts_event_tx);
-                }
-                log("INFO", "[TTS] channel closed, thread exiting".into());
-            });
+            Self::tts_thread(tts_config, tts_event_tx, tts_rx);
         });
 
         // ── Accumulator loop ──
@@ -174,21 +148,19 @@ impl Pipeline {
         self.log("INFO", "[ACCUM] loop started, waiting for STT events".into());
 
         loop {
-            // Check stop signal
             if !self.running.load(Ordering::Relaxed) {
                 self.log("INFO", "[ACCUM] stop signal received".into());
                 break;
             }
 
             let event = if !accum.has_words() {
-                // Timeout so we can check stop flag periodically
                 match tokio::time::timeout(
                     tokio::time::Duration::from_millis(500),
                     stt_rx.recv(),
                 ).await {
                     Ok(Some(e)) => e,
-                    Ok(None) => break,       // channel closed
-                    Err(_) => continue,      // timeout → re-check stop flag
+                    Ok(None) => break,
+                    Err(_) => continue,
                 }
             } else {
                 match tokio::time::timeout(flush_timeout, stt_rx.recv()).await {
@@ -239,71 +211,166 @@ impl Pipeline {
         Ok(())
     }
 
-    /// Drain queued messages, split clauses, generate TTS, play — with UI logging.
-    fn speak_with_log(
-        tts: &TtsEngine,
-        playback: &mut AudioPlayback,
-        rx: &mut mpsc::Receiver<String>,
-        text: String,
-        event_tx: &mpsc::Sender<EngineEvent>,
+    /// TTS thread — session reuse for gapless playback.
+    ///
+    /// One cpal stream is kept alive across multiple TTS messages. The stream
+    /// outputs silence between messages (zero overhead). Only destroyed after
+    /// SESSION_IDLE_MS of no new messages (utterance boundary).
+    fn tts_thread(
+        tts_config: crate::config::TtsConfig,
+        event_tx: mpsc::Sender<EngineEvent>,
+        mut tts_rx: mpsc::Receiver<String>,
     ) {
-        let log = |level: &str, msg: String| {
-            match level {
-                "ERROR" => tracing::error!("{msg}"),
-                _ => tracing::info!("{msg}"),
+        let log = {
+            let tx = event_tx.clone();
+            move |level: &str, msg: String| {
+                match level {
+                    "ERROR" => tracing::error!("{msg}"),
+                    "WARN" => tracing::warn!("{msg}"),
+                    _ => tracing::info!("{msg}"),
+                }
+                let _ = tx.try_send(EngineEvent::Log {
+                    level: level.to_string(), message: msg,
+                });
             }
-            let _ = event_tx.try_send(EngineEvent::Log {
-                level: level.to_string(), message: msg,
-            });
         };
 
-        // Drain queued messages — never drop content
-        let mut combined = text;
-        let mut drained = 0u32;
-        while let Ok(next) = rx.try_recv() {
-            combined.push_str(". ");
-            combined.push_str(&next);
-            drained += 1;
-        }
-        if drained > 0 {
-            log("INFO", format!("[TTS] ⏩ merged {drained} queued message(s)"));
-        }
+        log("INFO", "[TTS] thread started".into());
+        log("INFO", format!("[TTS] loading model + voice: {}...", tts_config.voice));
 
-        let clauses = accumulator::split_clauses(&combined);
-        let n = clauses.len();
-        log("INFO", format!("[TTS] 🔊 \"{combined}\" [{n} clause(s)]"));
-
-        let stream = match playback.stream(tts.playback_rate()) {
-            Ok(s) => s,
+        let t0 = std::time::Instant::now();
+        let tts = match tts::create_backend(&tts_config) {
+            Ok(t) => {
+                let secs = t0.elapsed().as_secs();
+                log("INFO", format!("[TTS] model loaded in {secs}s (sr={})", t.sample_rate()));
+                t
+            }
             Err(e) => {
-                log("ERROR", format!("[TTS] playback stream error: {e:#}"));
+                log("ERROR", format!("[TTS] init failed: {e:#}"));
+                let _ = event_tx.blocking_send(EngineEvent::Error {
+                    message: format!("TTS init failed: {e:#}"),
+                });
                 return;
             }
         };
 
-        let t0 = std::time::Instant::now();
-        let mut first_chunk_ms = 0u64;
-        let mut first = true;
-
-        for (i, clause) in clauses.iter().enumerate() {
-            log("INFO", format!("[TTS] generating clause {}/{n}: \"{clause}\"", i + 1));
-            match tts.generate_stream(clause, |chunk| {
-                if first {
-                    first_chunk_ms = t0.elapsed().as_millis() as u64;
-                    first = false;
-                }
-                stream.push(chunk);
-            }) {
-                Ok((fc, tot)) => {
-                    log("INFO", format!("[TTS] clause {}/{n} done: fc={fc}ms tot={tot}ms", i + 1));
-                }
-                Err(e) => log("ERROR", format!("[TTS] clause {}/{n} error: {e:#}", i + 1)),
+        let mut playback = match AudioPlayback::new(tts_config.output_device.as_deref()) {
+            Ok(p) => {
+                log("INFO", format!("[TTS] playback ready (output={:?})", tts_config.output_device));
+                p
             }
-        }
+            Err(e) => {
+                log("ERROR", format!("[TTS] playback init failed: {e:#}"));
+                let _ = event_tx.blocking_send(EngineEvent::Error {
+                    message: format!("TTS playback init failed: {e:#}"),
+                });
+                return;
+            }
+        };
 
-        let total_ms = t0.elapsed().as_millis();
-        log("INFO", format!("[TTS] ✅ total: first_chunk={first_chunk_ms}ms total={total_ms}ms"));
-        stream.finish();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all().build().unwrap();
+
+        rt.block_on(async {
+            log("INFO", "[TTS] ready, waiting for messages".into());
+
+            let mut session: Option<crate::audio::playback::PlaybackSession> = None;
+            let idle_timeout = tokio::time::Duration::from_millis(SESSION_IDLE_MS);
+
+            loop {
+                let text = if session.is_some() {
+                    // Active session — wait with timeout for next message
+                    match tokio::time::timeout(idle_timeout, tts_rx.recv()).await {
+                        Ok(Some(t)) => t,
+                        Ok(None) => {
+                            // Channel closed — finish session and exit
+                            log("INFO", "[TTS] channel closed, finishing session".into());
+                            if let Some(s) = session.take() { s.finish(); }
+                            break;
+                        }
+                        Err(_) => {
+                            // Idle timeout — finish session (utterance boundary)
+                            log("INFO", "[TTS] session idle timeout — finishing stream".into());
+                            if let Some(s) = session.take() { s.finish(); }
+                            continue;
+                        }
+                    }
+                } else {
+                    // No active session — block until next message
+                    match tts_rx.recv().await {
+                        Some(t) => t,
+                        None => {
+                            log("INFO", "[TTS] channel closed, thread exiting".into());
+                            break;
+                        }
+                    }
+                };
+
+                // Drain queued messages — never drop content
+                let mut combined = text;
+                let mut drained_count = 0u32;
+                while let Ok(next) = tts_rx.try_recv() {
+                    combined.push_str(". ");
+                    combined.push_str(&next);
+                    drained_count += 1;
+                }
+                if drained_count > 0 {
+                    log("INFO", format!("[TTS] merged {drained_count} queued message(s)"));
+                }
+
+                // Ensure session exists
+                if session.is_none() {
+                    match playback.stream(tts.playback_rate()) {
+                        Ok(s) => {
+                            log("INFO", "[TTS] new playback session created".into());
+                            session = Some(s);
+                        }
+                        Err(e) => {
+                            log("ERROR", format!("[TTS] playback stream error: {e:#}"));
+                            continue;
+                        }
+                    }
+                }
+
+                let sess = session.as_ref().unwrap();
+
+                // Split into clauses only for longer messages
+                let word_count = combined.split_whitespace().count();
+                let clauses = if word_count < CLAUSE_SPLIT_MIN_WORDS {
+                    vec![combined.clone()]
+                } else {
+                    accumulator::split_clauses(&combined)
+                };
+                let n = clauses.len();
+                log("INFO", format!("[TTS] \"{combined}\" [{n} clause(s), {word_count}w]"));
+
+                let t0 = std::time::Instant::now();
+                let mut first_chunk_ms = 0u64;
+                let mut first = true;
+
+                for (i, clause) in clauses.iter().enumerate() {
+                    log("INFO", format!("[TTS] generating clause {}/{n}: \"{clause}\"", i + 1));
+                    match tts.generate_stream(clause, &tts_config.language, &mut |chunk| {
+                        if first {
+                            first_chunk_ms = t0.elapsed().as_millis() as u64;
+                            first = false;
+                        }
+                        sess.push(chunk);
+                    }) {
+                        Ok((fc, tot)) => {
+                            log("INFO", format!("[TTS] clause {}/{n} done: fc={fc}ms tot={tot}ms", i + 1));
+                        }
+                        Err(e) => log("ERROR", format!("[TTS] clause {}/{n} error: {e:#}", i + 1)),
+                    }
+                }
+
+                // Signal end of this message (starts playback if pre-buffer wasn't reached)
+                sess.end_message();
+
+                let total_ms = t0.elapsed().as_millis();
+                log("INFO", format!("[TTS] total: first_chunk={first_chunk_ms}ms total={total_ms}ms"));
+            }
+        });
     }
 
     /// Translate fragments in parallel (max 3), output to TTS in sequence order.
@@ -332,23 +399,44 @@ impl Pipeline {
                 match translator.translate(&text).await {
                     Ok(translated) => {
                         let ms = t0.elapsed().as_millis();
-                        let log_msg = format!("[TRANSLATE] seq={seq} ({ms}ms): \"{text}\" → \"{translated}\"");
-                        tracing::info!("{log_msg}");
-                        let _ = event_tx.send(EngineEvent::Log {
-                            level: "INFO".into(), message: log_msg,
-                        }).await;
 
+                        // Length guard: reject LLM hallucinations
+                        let in_wc = text.split_whitespace().count();
+                        let out_wc = translated.split_whitespace().count();
+                        let rejected = in_wc < 10 && out_wc > in_wc * 3;
+
+                        if rejected {
+                            tracing::warn!(
+                                "[TRANSLATE] REJECTED seq={seq} (in={in_wc}w out={out_wc}w): \
+                                 \"{text}\" → \"{translated}\""
+                            );
+                            let _ = event_tx.send(EngineEvent::Log {
+                                level: "WARN".into(),
+                                message: format!("[TRANSLATE] rejected hallucination seq={seq}"),
+                            }).await;
+                        } else {
+                            let log_msg = format!(
+                                "[TRANSLATE] seq={seq} ({ms}ms): \"{text}\" → \"{translated}\""
+                            );
+                            tracing::info!("{log_msg}");
+                            let _ = event_tx.send(EngineEvent::Log {
+                                level: "INFO".into(), message: log_msg,
+                            }).await;
+                        }
+
+                        let final_text = if rejected { String::new() } else { translated };
                         let mut map = pending.lock().await;
-                        map.insert(seq, (text.clone(), translated));
+                        map.insert(seq, (text.clone(), final_text));
 
                         let mut next = next_seq.lock().await;
                         while let Some((original, result)) = map.remove(&*next) {
-                            // Emit transcript event to UI
-                            let _ = event_tx.send(EngineEvent::Transcript {
-                                original,
-                                translated: result.clone(),
-                            }).await;
-                            let _ = tx.send(result).await;
+                            if !result.is_empty() {
+                                let _ = event_tx.send(EngineEvent::Transcript {
+                                    original,
+                                    translated: result.clone(),
+                                }).await;
+                                let _ = tx.send(result).await;
+                            }
                             *next += 1;
                         }
                     }
@@ -357,8 +445,15 @@ impl Pipeline {
                         let _ = event_tx.send(EngineEvent::Error {
                             message: format!("Translation error: {e:#}"),
                         }).await;
+                        let mut map = pending.lock().await;
+                        map.insert(seq, (text.clone(), String::new()));
                         let mut next = next_seq.lock().await;
-                        if *next == seq { *next += 1; }
+                        while let Some((_original, result)) = map.remove(&*next) {
+                            if !result.is_empty() {
+                                let _ = tx.send(result).await;
+                            }
+                            *next += 1;
+                        }
                     }
                 }
             });

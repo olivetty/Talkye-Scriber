@@ -94,6 +94,9 @@ impl DeepgramStt {
                 _ => continue,
             };
 
+            // Log the unparsed JSON directly for debugging
+            tracing::info!("[STT-DEEPGRAM] JSON: {text}");
+
             if let Some(event) = Self::parse_event(&text) {
                 if event_tx.send(event).await.is_err() {
                     break;

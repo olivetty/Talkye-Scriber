@@ -35,6 +35,7 @@ pub struct TtsConfig {
     pub voice: String,
     pub speed: f32,
     pub output_device: Option<String>,
+    pub language: String,
 }
 
 pub struct AudioConfig {
@@ -54,13 +55,12 @@ impl Config {
         // Resolve voice path relative to project root (not cwd)
         let voice_raw = env_single("POCKET_VOICE", "alba");
         let voice = if voice_raw.contains('/') || voice_raw.contains('.') {
-            // It's a path — resolve relative to project root
             let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
             let resolved = project_root.join(&voice_raw);
             if resolved.exists() {
                 resolved.to_string_lossy().to_string()
             } else {
-                voice_raw // Fall back to raw value
+                voice_raw
             }
         } else {
             voice_raw // Built-in voice name like "alba"
@@ -86,6 +86,7 @@ impl Config {
                 voice,
                 speed: env_parse("POCKET_SPEED", 1.0),
                 output_device: env_optional_single("AUDIO_OUTPUT"),
+                language: env_single("TRANSLATE_TO", "English"),
             },
             audio: AudioConfig {
                 source: env_optional_single("AUDIO_SOURCE"),
@@ -93,8 +94,8 @@ impl Config {
                 virtual_mic: env_single("VIRTUAL_MIC_NAME", "live_interp_in"),
             },
             accumulator: AccumulatorConfig {
-                first_words: env_parse("ACCUM_FIRST_WORDS", 4),
-                min_words: env_parse("ACCUM_MIN_WORDS", 8),
+                first_words: env_parse("ACCUM_FIRST_WORDS", 3),
+                min_words: env_parse("ACCUM_MIN_WORDS", 5),
             },
         })
     }
@@ -117,9 +118,12 @@ fn env_or(primary: &str, fallback: &str, default: &str) -> String {
         .unwrap_or_else(|_| default.into())
 }
 
-/// Single key, None if empty/missing.
+/// Single key, None if empty/missing/whitespace-only.
 fn env_optional_single(key: &str) -> Option<String> {
-    std::env::var(key).ok().filter(|s| !s.is_empty())
+    std::env::var(key)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 fn env_parse<T: std::str::FromStr>(key: &str, default: T) -> T {

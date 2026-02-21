@@ -21,7 +21,7 @@ fn main() -> Result<()> {
     println!();
 
     let t0 = Instant::now();
-    let tts = talkye_core::tts::TtsEngine::new(&config.tts)?;
+    let tts = talkye_core::tts::create_backend(&config.tts)?;
     let load_ms = t0.elapsed().as_millis();
     println!("Voice load: {load_ms}ms\n");
 
@@ -37,9 +37,10 @@ fn main() -> Result<()> {
     println!("│ TTS        │ first_chunk│ total      │ RTF        │");
     println!("├────────────┼────────────┼────────────┼────────────┤");
 
+    let tts_lang = &config.tts.language;
     for (label, text) in &texts {
         let mut samples_total = 0usize;
-        let (fc_ms, total_ms) = tts.generate_stream(text, |chunk| {
+        let (fc_ms, total_ms) = tts.generate_stream(text, tts_lang, &mut |chunk| {
             samples_total += chunk.len();
         })?;
         let audio_sec = samples_total as f64 / tts.sample_rate() as f64;
@@ -90,7 +91,7 @@ fn main() -> Result<()> {
         let translated = rt.block_on(translator2.translate(text))?;
         let translate_ms = t_all.elapsed().as_millis();
 
-        let (fc_ms, _tts_total) = tts.generate_stream(&translated, |_| {})?;
+        let (fc_ms, _tts_total) = tts.generate_stream(&translated, tts_lang, &mut |_| {})?;
         let total_ms = t_all.elapsed().as_millis();
 
         println!("│ {:<10} │ {:>7}ms  │ {:>7}ms  │ {:>7}ms  │",
@@ -113,7 +114,7 @@ fn main() -> Result<()> {
     let t = Instant::now();
     let mut first_ms = 0u64;
     let mut first = true;
-    let _ = tts.generate_stream(long_en, |_| {
+    let _ = tts.generate_stream(long_en, tts_lang, &mut |_| {
         if first { first_ms = t.elapsed().as_millis() as u64; first = false; }
     })?;
     let total = t.elapsed().as_millis();
@@ -126,7 +127,7 @@ fn main() -> Result<()> {
     let mut first_ms = 0u64;
     let mut first = true;
     for clause in &clauses {
-        let _ = tts.generate_stream(clause, |_| {
+        let _ = tts.generate_stream(clause, tts_lang, &mut |_| {
             if first { first_ms = t.elapsed().as_millis() as u64; first = false; }
         })?;
     }

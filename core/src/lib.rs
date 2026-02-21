@@ -1,6 +1,6 @@
 //! Talkye Core — real-time voice translation engine.
 //!
-//! Pipeline: Audio Capture → Deepgram STT → LLM Translate → Pocket TTS → Playback
+//! Pipeline: Audio Capture → STT → LLM Translate → TTS → Playback
 
 pub mod accumulator;
 pub mod audio;

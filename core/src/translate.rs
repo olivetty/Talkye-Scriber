@@ -46,14 +46,29 @@ impl Translator {
 
     /// Translate a text fragment. Returns translated text.
     pub async fn translate(&self, text: &str) -> Result<String> {
+        // Skip empty/punctuation-only input
+        let clean = text.chars().filter(|c| c.is_alphanumeric()).count();
+        if clean == 0 {
+            return Ok(String::new());
+        }
+
         let ctx_prompt = self.build_context();
 
         let system = format!(
-            "You are a real-time {} to {} interpreter in a live conversation. \
-             Translate naturally. Output ONLY the {} translation, nothing else. \
-             If given previous parts of the same sentence, ensure your translation \
-             flows naturally as a continuation.",
-            self.from_lang, self.to_lang, self.to_lang
+            "You are a real-time speech-to-speech interpreter. \
+             Translate from {from} to {to}.\n\
+             STRICT RULES:\n\
+             - Output ONLY the {to} translation, nothing else\n\
+             - NEVER apologize, NEVER say you don't understand\n\
+             - NEVER ask the user to repeat or clarify\n\
+             - NEVER add explanations, comments, or notes\n\
+             - NEVER expand or elaborate — output must be similar length to input\n\
+             - The input comes from automatic speech recognition and MAY contain errors or wrong language. Translate the INTENT, not literal words\n\
+             - If input is garbled or nonsensical, translate your best guess into {to}\n\
+             - If input is already in {to}, output it unchanged\n\
+             - Keep it natural and conversational\n\
+             - Maximum 1-2 sentences, similar word count to input",
+            from = self.from_lang, to = self.to_lang
         );
 
         let user_msg = format!("{ctx_prompt}Translate: {text}");

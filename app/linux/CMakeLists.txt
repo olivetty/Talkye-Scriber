@@ -7,7 +7,7 @@ project(runner LANGUAGES CXX)
 set(BINARY_NAME "talkye_app")
 # The unique GTK application identifier for this application. See:
 # https://wiki.gnome.org/HowDoI/ChooseApplicationID
-set(APPLICATION_ID "com.example.talkye_app")
+set(APPLICATION_ID "com.talkye.meet")
 
 # Explicitly opt in to modern CMake behaviors to avoid warnings with recent
 # versions of CMake.
@@ -111,6 +111,32 @@ set(NATIVE_ASSETS_DIR "${PROJECT_BUILD_DIR}native_assets/linux/")
 install(DIRECTORY "${NATIVE_ASSETS_DIR}"
    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
    COMPONENT Runtime)
+
+# Install app icon next to the binary for GTK window icon
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/runner/talkye-meet.png"
+  DESTINATION "${CMAKE_INSTALL_PREFIX}"
+  COMPONENT Runtime)
+
+# Install .desktop file and icon to system locations (for GNOME dock icon)
+install(CODE "
+  # Install icon to ~/.local/share/icons/hicolor/512x512/apps/
+  set(ICON_DIR \"$ENV{HOME}/.local/share/icons/hicolor/512x512/apps\")
+  file(MAKE_DIRECTORY \${ICON_DIR})
+  file(COPY \"${CMAKE_CURRENT_SOURCE_DIR}/runner/talkye-meet.png\"
+       DESTINATION \${ICON_DIR})
+  file(RENAME \"\${ICON_DIR}/talkye-meet.png\" \"\${ICON_DIR}/com.talkye.meet.png\")
+
+  # Install .desktop file to ~/.local/share/applications/
+  set(DESKTOP_DIR \"$ENV{HOME}/.local/share/applications\")
+  file(MAKE_DIRECTORY \${DESKTOP_DIR})
+  file(COPY \"${CMAKE_CURRENT_SOURCE_DIR}/com.talkye.meet.desktop\"
+       DESTINATION \${DESKTOP_DIR})
+  " COMPONENT Runtime)
+
+# Refresh icon cache
+install(CODE "
+  execute_process(COMMAND gtk-update-icon-cache -f -t \"$ENV{HOME}/.local/share/icons/hicolor\" ERROR_QUIET)
+  " COMPONENT Runtime)
 
 # Fully re-copy the assets directory on each build to avoid having stale files
 # from a previous install.

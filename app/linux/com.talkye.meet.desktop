@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Talkye Meet
+Comment=Live translation assistant for video calls
+Exec=talkye_app
+Icon=com.talkye.meet
+Terminal=false
+StartupWMClass=com.talkye.meet
+Categories=AudioVideo;Network;
