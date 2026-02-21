@@ -59,6 +59,9 @@ bytes = "1"
 # Futures utilities
 futures-util = "0.3"
 
+# WAV file writing (voice recording)
+hound = "3.5"
+
 # Optimize dependencies even in dev builds (critical for pocket-tts / candle)
 [profile.dev.package."*"]
 opt-level = 2

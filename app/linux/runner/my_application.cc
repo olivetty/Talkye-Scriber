@@ -78,22 +78,13 @@ static void my_application_activate(GApplication* application) {
     }
   }
 
-  // Narrow fixed window — no resize, compact translator feel
-  gtk_window_set_default_size(window, 400, 700);
-  gtk_window_set_resizable(window, FALSE);
-  gtk_widget_set_size_request(GTK_WIDGET(window), 400, 700);
+  // Full app window — resizable, centered
+  gtk_window_set_default_size(window, 960, 680);
+  gtk_window_set_resizable(window, TRUE);
+  gtk_widget_set_size_request(GTK_WIDGET(window), 800, 560);
 
-  // Position: top-right corner of primary monitor
-  GdkDisplay* display = gdk_display_get_default();
-  GdkMonitor* monitor = gdk_display_get_primary_monitor(display);
-  if (monitor == nullptr) {
-    monitor = gdk_display_get_monitor(display, 0);
-  }
-  if (monitor != nullptr) {
-    GdkRectangle geom;
-    gdk_monitor_get_geometry(monitor, &geom);
-    gtk_window_move(window, geom.x + geom.width - 420, geom.y + 40);
-  }
+  // Center on primary monitor
+  gtk_window_set_position(window, GTK_WIN_POS_CENTER);
 
   g_autoptr(FlDartProject) project = fl_dart_project_new();
   fl_dart_project_set_dart_entrypoint_arguments(

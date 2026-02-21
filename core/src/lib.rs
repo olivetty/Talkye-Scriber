@@ -12,6 +12,8 @@ pub mod translate;
 pub mod tts;
 pub mod vad;
 
+pub mod voice;
+
 pub use config::Config;
 pub use engine::{Engine, EngineEvent, EngineStatus, AudioDevice, ModelStatus};
 pub use pipeline::Pipeline;

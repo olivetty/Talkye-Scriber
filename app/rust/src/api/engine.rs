@@ -307,3 +307,75 @@ pub fn check_models(
         voice_ready: s.voice_ready, voice_path: s.voice_path,
     }
 }
+
+// ── Voice management FFI ──
+
+pub struct FfiVoiceInfo {
+    pub name: String,
+    pub path: String,
+    pub is_precomputed: bool,
+    pub size_bytes: u64,
+}
+
+/// List available voices in the voices/ directory.
+#[frb(sync)]
+pub fn list_voices() -> Vec<FfiVoiceInfo> {
+    let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent().unwrap().parent().unwrap();
+    let voices_dir = project_root.join("voices");
+    talkye_core::voice::list_voices(&voices_dir.to_string_lossy())
+        .into_iter()
+        .map(|v| FfiVoiceInfo {
+            name: v.name, path: v.path,
+            is_precomputed: v.is_precomputed, size_bytes: v.size_bytes,
+        })
+        .collect()
+}
+
+/// Record voice from mic for given duration. Blocking — runs in isolate.
+pub fn record_voice(name: String, duration_secs: f32) -> String {
+    let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent().unwrap().parent().unwrap();
+    let out_path = project_root.join("voices").join(format!("{name}.wav"));
+    // Ensure voices dir exists
+    std::fs::create_dir_all(project_root.join("voices")).ok();
+    talkye_core::voice::record_voice(&out_path.to_string_lossy(), duration_secs)
+        .unwrap_or_else(|e| format!("ERROR: {e:#}"))
+}
+
+/// Precompute voice (.wav → .safetensors). Blocking — runs in isolate.
+pub fn precompute_voice(wav_path: String) -> String {
+    match talkye_core::voice::precompute_voice(&wav_path) {
+        Ok(path) => path,
+        Err(e) => format!("ERROR: {e:#}"),
+    }
+}
+
+/// Preview a voice — generates TTS, saves preview WAV, plays it. Returns preview path.
+pub fn preview_voice(voice_path: String) -> String {
+    match talkye_core::voice::preview_voice(&voice_path) {
+        Ok(path) => path,
+        Err(e) => {
+            tracing::error!("[FFI] Preview failed: {e:#}");
+            format!("ERROR: {e:#}")
+        }
+    }
+}
+
+/// Play a cached preview WAV (instant, no TTS). Blocking.
+pub fn play_preview(preview_wav_path: String) -> bool {
+    talkye_core::voice::play_preview(&preview_wav_path).is_ok()
+}
+
+/// Delete a voice and its files.
+pub fn delete_voice(voice_path: String) -> bool {
+    talkye_core::voice::delete_voice(&voice_path).is_ok()
+}
+
+/// Get the project voices directory path.
+#[frb(sync)]
+pub fn voices_dir() -> String {
+    let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent().unwrap().parent().unwrap();
+    project_root.join("voices").to_string_lossy().to_string()
+}

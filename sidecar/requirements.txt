@@ -1,0 +1,21 @@
+# Talkye Python Sidecar
+# Install: pip install -r requirements.txt
+
+# Core
+python-dotenv>=1.0.0
+openai>=1.0.0
+
+# Server
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+websockets>=12.0
+
+# Desktop PTT (push-to-talk)
+evdev>=1.6.0
+pynput>=1.7.6
+
+# VAD mode
+setuptools<81
+webrtcvad>=2.0.10
+openwakeword>=0.4.0

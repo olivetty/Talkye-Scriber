@@ -40,6 +40,7 @@ dependencies:
   path_provider: ^2.1.5
   system_tray: ^2.0.3
   window_manager: ^0.4.3
+  lottie: ^3.3.1
 
 dev_dependencies:
   flutter_test:
@@ -73,6 +74,7 @@ flutter:
     - assets/tray-dark.png
     - assets/tray-light.png
     - assets/tray-live.png
+    - assets/vui-animation.json
 
   # To add assets to your application, add an assets section, like this:
   # assets:

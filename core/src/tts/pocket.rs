@@ -26,7 +26,10 @@ impl PocketTts {
         let load_ms = t0.elapsed().as_millis();
 
         let t1 = Instant::now();
-        let voice_state = if config.voice.ends_with(".safetensors") {
+        let voice_state = if config.voice.is_empty() {
+            // No voice specified — use zero-shot (generic voice, no cloning)
+            pocket_tts::voice_state::init_states(1, 1000)
+        } else if config.voice.ends_with(".safetensors") {
             model.get_voice_state_from_prompt_file(&config.voice)
                 .context("Failed to load pre-computed voice")?
         } else {
@@ -38,7 +41,7 @@ impl PocketTts {
         let sample_rate = model.sample_rate;
         tracing::info!(
             "[TTS-POCKET] loaded in {load_ms}ms + voice '{}' in {voice_ms}ms (sr={sample_rate})",
-            config.voice
+            if config.voice.is_empty() { "default (zero-shot)" } else { &config.voice }
         );
 
         Ok(Self { model, voice_state, sample_rate, speed: config.speed })

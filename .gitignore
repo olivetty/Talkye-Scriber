@@ -14,6 +14,10 @@ prototype/venv/
 prototype/__pycache__/
 *.pyc
 
+# Python (sidecar)
+sidecar/venv/
+sidecar/__pycache__/
+
 # Environment
 .env
 .env.local
@@ -33,6 +37,7 @@ Thumbs.db
 prototype/models/*.onnx
 !prototype/models/.gitkeep
 models/
+sidecar/models/*.onnx
 
 # Voice samples (keep originals)
 # prototype/voices/ is tracked

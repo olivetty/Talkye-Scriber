@@ -42,6 +42,40 @@ FfiModelStatus checkModels({
   voicePath: voicePath,
 );
 
+/// List available voices in the voices/ directory.
+List<FfiVoiceInfo> listVoices() =>
+    RustLib.instance.api.crateApiEngineListVoices();
+
+/// Record voice from mic for given duration. Blocking — runs in isolate.
+Future<String> recordVoice({
+  required String name,
+  required double durationSecs,
+}) => RustLib.instance.api.crateApiEngineRecordVoice(
+  name: name,
+  durationSecs: durationSecs,
+);
+
+/// Precompute voice (.wav → .safetensors). Blocking — runs in isolate.
+Future<String> precomputeVoice({required String wavPath}) =>
+    RustLib.instance.api.crateApiEnginePrecomputeVoice(wavPath: wavPath);
+
+/// Preview a voice — generates TTS, saves preview WAV, plays it. Returns preview path.
+Future<String> previewVoice({required String voicePath}) =>
+    RustLib.instance.api.crateApiEnginePreviewVoice(voicePath: voicePath);
+
+/// Play a cached preview WAV (instant, no TTS). Blocking.
+Future<bool> playPreview({required String previewWavPath}) => RustLib
+    .instance
+    .api
+    .crateApiEnginePlayPreview(previewWavPath: previewWavPath);
+
+/// Delete a voice and its files.
+Future<bool> deleteVoice({required String voicePath}) =>
+    RustLib.instance.api.crateApiEngineDeleteVoice(voicePath: voicePath);
+
+/// Get the project voices directory path.
+String voicesDir() => RustLib.instance.api.crateApiEngineVoicesDir();
+
 class FfiAudioDevice {
   final String name;
   final bool isDefault;
@@ -184,4 +218,35 @@ class FfiModelStatus {
           vadPath == other.vadPath &&
           voiceReady == other.voiceReady &&
           voicePath == other.voicePath;
+}
+
+class FfiVoiceInfo {
+  final String name;
+  final String path;
+  final bool isPrecomputed;
+  final BigInt sizeBytes;
+
+  const FfiVoiceInfo({
+    required this.name,
+    required this.path,
+    required this.isPrecomputed,
+    required this.sizeBytes,
+  });
+
+  @override
+  int get hashCode =>
+      name.hashCode ^
+      path.hashCode ^
+      isPrecomputed.hashCode ^
+      sizeBytes.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is FfiVoiceInfo &&
+          runtimeType == other.runtimeType &&
+          name == other.name &&
+          path == other.path &&
+          isPrecomputed == other.isPrecomputed &&
+          sizeBytes == other.sizeBytes;
 }

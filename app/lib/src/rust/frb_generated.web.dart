@@ -57,13 +57,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   FfiModelStatus dco_decode_ffi_model_status(dynamic raw);
 
   @protected
+  FfiVoiceInfo dco_decode_ffi_voice_info(dynamic raw);
+
+  @protected
   List<FfiAudioDevice> dco_decode_list_ffi_audio_device(dynamic raw);
+
+  @protected
+  List<FfiVoiceInfo> dco_decode_list_ffi_voice_info(dynamic raw);
 
   @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
 
   @protected
   int dco_decode_u_32(dynamic raw);
+
+  @protected
+  BigInt dco_decode_u_64(dynamic raw);
 
   @protected
   int dco_decode_u_8(dynamic raw);
@@ -111,7 +120,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   FfiModelStatus sse_decode_ffi_model_status(SseDeserializer deserializer);
 
   @protected
+  FfiVoiceInfo sse_decode_ffi_voice_info(SseDeserializer deserializer);
+
+  @protected
   List<FfiAudioDevice> sse_decode_list_ffi_audio_device(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<FfiVoiceInfo> sse_decode_list_ffi_voice_info(
     SseDeserializer deserializer,
   );
 
@@ -120,6 +137,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   int sse_decode_u_32(SseDeserializer deserializer);
+
+  @protected
+  BigInt sse_decode_u_64(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_8(SseDeserializer deserializer);
@@ -188,8 +208,17 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_ffi_voice_info(FfiVoiceInfo self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_ffi_audio_device(
     List<FfiAudioDevice> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_ffi_voice_info(
+    List<FfiVoiceInfo> self,
     SseSerializer serializer,
   );
 
@@ -201,6 +230,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_u_32(int self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_u_64(BigInt self, SseSerializer serializer);
 
   @protected
   void sse_encode_u_8(int self, SseSerializer serializer);

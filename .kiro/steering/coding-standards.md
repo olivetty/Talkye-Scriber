@@ -71,3 +71,13 @@ impl Component {
 When modifying pipeline logic, always check:
 - `prototype/test_deepgram.py` — the working Python implementation
 - `docs/architecture.md` — system design and data flow
+
+## Flutter UI Rules
+
+- Dark mode only. No light theme support.
+- Accent color: purple/violet (`C.accent`). Green only for status indicators.
+- Action buttons: `TextButton` with solid fill — no outlines, no borders, no icons. Text only, colored by intent (purple=action, red=destructive, muted=cancel).
+- No outlines/borders on ANY element. Differentiate by elevation (background shade).
+- Interactive containers must have hover state via `MouseRegion` + `AnimatedContainer`.
+- Color system: use `C` class from `theme.dart`. Elevation: `C.level1` through `C.level4`.
+- Glass effect via `BackdropFilter` for sidebar and overlays.
