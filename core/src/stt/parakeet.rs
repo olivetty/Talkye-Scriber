@@ -24,6 +24,10 @@ const VAD_SPEECH_THRESHOLD: f32 = 0.35;
 /// Minimum buffer before smart flush at a VAD pause (ms).
 const MIN_FLUSH_MS: u64 = 3000;
 
+/// Faster first flush for lower initial latency (ms).
+/// After the first transcription in an utterance, reverts to MIN_FLUSH_MS.
+const FIRST_FLUSH_MS: u64 = 2000;
+
 /// Maximum buffer before forced flush during continuous speech (ms).
 const MAX_FLUSH_MS: u64 = 6000;
 
@@ -43,8 +47,10 @@ const MIN_TRANSCRIBE_SAMPLES: usize = 8000;
 const OVERLAP_SAMPLES: usize = 4800;
 
 /// Minimum silence before smart flush triggers (ms).
-/// Catch fast speaker breath pauses.
 const MIN_SILENCE_FOR_FLUSH_MS: u64 = 600;
+
+/// Shorter silence window for first flush (ms).
+const FIRST_SILENCE_FOR_FLUSH_MS: u64 = 400;
 
 pub async fn run_parakeet_stt(
     config: &SttConfig,
@@ -99,6 +105,8 @@ async fn run_vad_loop(
     let mut speech_chunks_in_buf: u32 = 0;
     // When we enter "silence after flush" state, track how long we stay there.
     let mut idle_since: Option<Instant> = None;
+    // First flush in utterance uses faster thresholds for lower initial latency.
+    let mut first_flush_done = false;
 
     // Heartbeat
     let mut hb_timer = Instant::now();
@@ -165,15 +173,20 @@ async fn run_vad_loop(
             let silence_ms = silence_start.unwrap().elapsed().as_millis() as u64;
             let buffer_ms = samples_to_ms(audio_buf.len());
 
-            // Smart flush: 2.5s+ buffered + real pause (500ms+)
-            if buffer_ms >= MIN_FLUSH_MS
-                && silence_ms >= MIN_SILENCE_FOR_FLUSH_MS
+            // Smart flush: use faster thresholds for first flush in utterance
+            let flush_ms = if first_flush_done { MIN_FLUSH_MS } else { FIRST_FLUSH_MS };
+            let silence_needed = if first_flush_done { MIN_SILENCE_FOR_FLUSH_MS } else { FIRST_SILENCE_FOR_FLUSH_MS };
+
+            if buffer_ms >= flush_ms
+                && silence_ms >= silence_needed
                 && silence_ms < SILENCE_TRIGGER_MS
             {
                 tracing::info!(
                     "[STT-PARAKEET] smart flush ({buffer_ms}ms, silence={silence_ms}ms, \
-                     spk={speech_chunks_in_buf})"
+                     spk={speech_chunks_in_buf}, first={})",
+                    !first_flush_done
                 );
+                first_flush_done = true;
                 do_flush(&mut model, &mut audio_buf, &mut overlap_buf,
                          &event_tx, false).await;
                 speech_chunks_in_buf = 0;
@@ -219,6 +232,7 @@ async fn run_vad_loop(
                     speech_active = false;
                     silence_start = None;
                     idle_since = None;
+                    first_flush_done = false;
                     last_interim = Instant::now();
                     send_event(&event_tx, SttEvent::UtteranceEnd).await;
                     last_event_time = Instant::now();
@@ -244,6 +258,7 @@ async fn run_vad_loop(
                         speech_active = false;
                         silence_start = None;
                         idle_since = None;
+                        first_flush_done = false;
                         last_interim = Instant::now();
                         send_event(&event_tx, SttEvent::UtteranceEnd).await;
                         last_event_time = Instant::now();
@@ -275,6 +290,7 @@ async fn run_vad_loop(
                     speech_active = false;
                     silence_start = None;
                     idle_since = None;
+                    first_flush_done = false;
                     last_interim = Instant::now();
                     send_event(&event_tx, SttEvent::UtteranceEnd).await;
                     last_event_time = Instant::now();
@@ -291,6 +307,7 @@ async fn run_vad_loop(
                 speech_active = false;
                 silence_start = None;
                 idle_since = None;
+                first_flush_done = false;
                 last_interim = Instant::now();
                 last_event_time = Instant::now();
                 stall_warned = false;
