@@ -22,13 +22,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _chatterboxInstalled = false;
   bool _chatterboxAvailable = false;
   bool _chatterboxLoaded = false;
+  bool _chatterboxWarmedUp = false;
   bool _chatterboxCanInstall = false;
   String _gpuName = '';
   String _gpuBackend = 'cpu';
   bool _installingChatterbox = false;
   bool _loadingChatterbox = false;
   bool _testingTts = false;
-  bool _initialLoading = true; // true until first successful status fetch
+  bool _initialLoading = true; // true until model loaded + warmed up
 
   @override
   void initState() {
@@ -44,18 +45,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await Future.delayed(const Duration(seconds: 2));
       if (!mounted) return;
     }
-    // If Chatterbox is selected but not loaded yet, keep polling
-    // (auto-load takes ~12s at startup)
-    if (widget.settings.ttsBackend == 'chatterbox' && !_chatterboxLoaded) {
-      for (var i = 0; i < 15; i++) {
+    // If Chatterbox is selected but not warmed up yet, keep polling
+    // (auto-load + warm-up takes ~20-25s at startup)
+    if (widget.settings.ttsBackend == 'chatterbox' && !_chatterboxWarmedUp) {
+      for (var i = 0; i < 20; i++) {
         await Future.delayed(const Duration(seconds: 2));
         if (!mounted) return;
         await _fetchTtsStatus();
-        if (_chatterboxLoaded) break;
+        if (_chatterboxWarmedUp) break;
       }
     }
     if (mounted) setState(() => _initialLoading = false);
-  }
   }
 
   Future<Map<String, dynamic>?> _get(String path) async {
@@ -78,6 +78,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _chatterboxInstalled = cbx['installed'] as bool? ?? false;
         _chatterboxAvailable = cbx['available'] as bool? ?? false;
         _chatterboxLoaded = cbx['loaded'] as bool? ?? false;
+        _chatterboxWarmedUp = cbx['warmed_up'] as bool? ?? false;
         _chatterboxCanInstall = cbx['can_install'] as bool? ?? false;
         _gpuName = gpu['name'] as String? ?? 'Unknown';
         _gpuBackend = gpu['backend'] as String? ?? 'cpu';
@@ -152,10 +153,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 20),
           const Text('Loading models...', style: TextStyle(fontSize: 15, color: C.text, fontWeight: FontWeight.w500)),
           const SizedBox(height: 8),
-          Text('Chatterbox TTS · $_gpuName',
+          Text(_chatterboxLoaded
+            ? 'Warming up TTS · $_gpuName'
+            : 'Chatterbox TTS · $_gpuName',
             style: const TextStyle(fontSize: 12, color: C.textSub)),
           const SizedBox(height: 4),
-          const Text('This takes about 15 seconds on first launch',
+          const Text('This takes about 20 seconds on first launch',
             style: TextStyle(fontSize: 11, color: C.textMuted)),
         ]),
       );
@@ -383,7 +386,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _testBtn('🇫🇷 French', 'Bonjour, ceci est un test de la voix.', 'fr'),
                 _testBtn('🇩🇪 German', 'Hallo, dies ist ein Test der Stimme.', 'de'),
                 _testBtn('🇪🇸 Spanish', 'Hola, esta es una prueba de la voz.', 'es'),
-                _testBtn('🇯🇵 Japanese', 'こんにちは、これは音声のテストです。', 'ja'),
               ]),
             ],
           ]),

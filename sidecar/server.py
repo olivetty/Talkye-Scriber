@@ -94,7 +94,7 @@ async def startup():
 
 @app.on_event("startup")
 async def auto_load_chatterbox():
-    """Auto-load Chatterbox if selected in settings."""
+    """Auto-load Chatterbox if selected in settings, then warm up."""
     def _load():
         try:
             from tts import get_backend_from_settings
@@ -103,7 +103,9 @@ async def auto_load_chatterbox():
             from tts_chatterbox import chatterbox_tts
             if chatterbox_tts.available:
                 logger.info("Auto-loading Chatterbox (selected in settings)...")
-                chatterbox_tts.load()
+                if chatterbox_tts.load():
+                    # Warm up CUDA kernels so first real generation is fast
+                    chatterbox_tts.warmup()
         except Exception as e:
             logger.info("Chatterbox auto-load skipped: %s", e)
     threading.Thread(target=_load, daemon=True, name="cbx-autoload").start()

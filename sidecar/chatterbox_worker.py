@@ -33,6 +33,7 @@ app = FastAPI(title="Chatterbox Worker", version="0.1.0")
 _model = None
 _model_lock = threading.Lock()
 _loading = False
+_warmed_up = False
 
 
 def _gpu_info() -> dict:
@@ -58,6 +59,7 @@ def status():
     return {
         "loaded": _model is not None,
         "loading": _loading,
+        "warmed_up": _warmed_up,
         "gpu": _gpu_info(),
         "sample_rate": _model.sr if _model else None,
     }
@@ -120,6 +122,30 @@ class GenerateRequest(BaseModel):
     exaggeration: float = 0.5
     cfg_weight: float = 0.5
     output_path: str | None = None
+
+
+@app.post("/warmup")
+def warmup():
+    """Run a short generation to warm up CUDA kernels. Discards output."""
+    global _warmed_up
+    if _model is None:
+        return {"ok": False, "error": "Model not loaded"}
+    if _warmed_up:
+        return {"ok": True, "message": "Already warmed up"}
+    try:
+        t0 = time.perf_counter()
+        logger.info("Warming up model...")
+        wav = _model.generate("Ready.", language_id="en",
+                              exaggeration=0.3, cfg_weight=0.5)
+        elapsed = time.perf_counter() - t0
+        _warmed_up = True
+        logger.info("Warm-up done in %.1fs", elapsed)
+        return {"ok": True, "elapsed": round(elapsed, 2)}
+    except Exception as e:
+        logger.exception("Warm-up failed: %s", e)
+        # Still mark as warmed up so we don't block forever
+        _warmed_up = True
+        return {"ok": False, "error": str(e)}
 
 
 @app.post("/generate")

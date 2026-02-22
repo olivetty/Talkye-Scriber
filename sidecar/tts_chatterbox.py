@@ -230,6 +230,27 @@ class ChatterboxTTS:
         resp = _worker_request("GET", "/status", timeout=3)
         return resp is not None and resp.get("loaded", False)
 
+    @property
+    def warmed_up(self) -> bool:
+        """True if worker is loaded and CUDA kernels are warmed up."""
+        if not self.worker_running:
+            return False
+        resp = _worker_request("GET", "/status", timeout=3)
+        return resp is not None and resp.get("warmed_up", False)
+
+    def warmup(self) -> bool:
+        """Run a short generation to warm up CUDA kernels."""
+        if not self.worker_running:
+            return False
+        resp = _worker_request("POST", "/warmup", data={}, timeout=120)
+        if resp and resp.get("ok"):
+            logger.info("Chatterbox warm-up complete (%.1fs)",
+                        resp.get("elapsed", 0))
+            return True
+        logger.warning("Chatterbox warm-up failed: %s",
+                       resp.get("error", "unknown") if resp else "unreachable")
+        return False
+
     def _start_worker(self) -> bool:
         """Start the chatterbox_worker.py subprocess."""
         if self.worker_running:
@@ -398,6 +419,7 @@ class ChatterboxTTS:
         return {
             "installed": self.installed,
             "loaded": worker_status.get("loaded", False) if worker_status else False,
+            "warmed_up": worker_status.get("warmed_up", False) if worker_status else False,
             "gpu": self.gpu_info,
             "available": self.available,
             "can_install": self.can_install,
