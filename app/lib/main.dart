@@ -220,27 +220,21 @@ class _AppShellState extends State<AppShell> with WindowListener {
 
     // Find Python — prefer sidecar venv, fallback to system
     final venvPython = '$sidecarDir/venv/bin/python';
-    final python = await File(venvPython).exists() ? venvPython : 'python3';
 
-    // Ensure venv exists
-    if (!await File(venvPython).exists()) {
-      LogBuffer.add('SIDECAR: creating venv...');
-      final venvResult = await Process.run('python3', ['-m', 'venv', '$sidecarDir/venv']);
-      if (venvResult.exitCode != 0) {
-        LogBuffer.add('SIDECAR: venv creation failed: ${venvResult.stderr}');
-        return;
-      }
-    }
-
-    // Always sync deps — pip is fast when everything is already installed
-    LogBuffer.add('SIDECAR: syncing dependencies...');
-    final pipResult = await Process.run(
-      '$sidecarDir/venv/bin/pip', ['install', '-r', '$sidecarDir/requirements.txt', '-q'],
-      environment: {'CMAKE_ARGS': '-DGGML_CUDA=on'},
+    // Run setup.sh — creates venv, installs deps, detects CUDA for llama-cpp-python
+    LogBuffer.add('SIDECAR: running setup...');
+    final setupResult = await Process.run(
+      'bash', ['$sidecarDir/setup.sh'],
+      workingDirectory: sidecarDir,
     );
-    if (pipResult.exitCode != 0) {
-      LogBuffer.add('SIDECAR: pip install failed: ${pipResult.stderr}');
-      // Continue anyway — existing deps might be enough
+    if (setupResult.exitCode != 0) {
+      LogBuffer.add('SIDECAR: setup failed: ${setupResult.stderr}');
+      // Try to continue if venv already exists
+      if (!await File(venvPython).exists()) return;
+    } else {
+      for (final line in (setupResult.stdout as String).split('\n')) {
+        if (line.trim().isNotEmpty) LogBuffer.add('SIDECAR: $line');
+      }
     }
 
     LogBuffer.add('SIDECAR: starting on :8179...');
