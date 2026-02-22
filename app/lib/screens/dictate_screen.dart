@@ -479,6 +479,8 @@ class _DictateScreenState extends State<DictateScreen> {
         _row('Language', _langDropdown()),
         const SizedBox(height: 12),
         _row('Sound', _soundDropdown()),
+        const SizedBox(height: 12),
+        _row('STT Engine', _sttBackendDropdown()),
       ]),
     );
   }
@@ -595,6 +597,40 @@ class _DictateScreenState extends State<DictateScreen> {
         decoration: BoxDecoration(color: C.level2, borderRadius: BorderRadius.circular(6)),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
           Text(themes.firstWhere((e) => e.$1 == _soundTheme, orElse: () => themes.first).$2,
+            style: const TextStyle(fontSize: 12, color: C.text, fontWeight: FontWeight.w500)),
+          const SizedBox(width: 4),
+          const Icon(Icons.expand_more_rounded, size: 14, color: C.textMuted),
+        ]),
+      ),
+    );
+  }
+
+  Widget _sttBackendDropdown() {
+    const backends = [
+      ('groq', 'Groq Cloud'),
+      ('local', 'Whisper Local'),
+    ];
+    final current = widget.settings.dictateSttBackend;
+    return PopupMenuButton<String>(
+      onSelected: (v) {
+        widget.settings.dictateSttBackend = v;
+        widget.settings.save();
+        _updateConfig({'stt_backend': v});
+        setState(() {});
+      },
+      offset: const Offset(0, 32), color: C.level3,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      itemBuilder: (_) => backends.map((e) => PopupMenuItem(
+        value: e.$1, height: 38,
+        child: Text(e.$2, style: TextStyle(fontSize: 12,
+          color: e.$1 == current ? C.accent : C.text,
+          fontWeight: e.$1 == current ? FontWeight.w600 : FontWeight.w400)),
+      )).toList(),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(color: C.level2, borderRadius: BorderRadius.circular(6)),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Text(backends.firstWhere((e) => e.$1 == current, orElse: () => backends.first).$2,
             style: const TextStyle(fontSize: 12, color: C.text, fontWeight: FontWeight.w500)),
           const SizedBox(width: 4),
           const Icon(Icons.expand_more_rounded, size: 14, color: C.textMuted),

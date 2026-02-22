@@ -50,6 +50,7 @@ class AppSettings {
   String triggerKey; // evdev name, e.g. KEY_RIGHTCTRL
   String soundTheme; // subtle | mechanical | silent
   String inputMode; // ptt | vad
+  String dictateSttBackend; // groq | local (whisper.cpp)
   String wakePhrase; // wake phrase for VAD (user-trained)
   int vadTimeout; // seconds of silence → standby
   bool autoEnter; // press Enter when VAD session ends
@@ -62,6 +63,7 @@ class AppSettings {
     this.triggerKey = 'KEY_RIGHTCTRL',
     this.soundTheme = 'subtle',
     this.inputMode = 'ptt',
+    this.dictateSttBackend = 'groq',
     this.wakePhrase = 'hey mira',
     this.vadTimeout = 8,
     this.autoEnter = true,
@@ -85,6 +87,7 @@ class AppSettings {
           triggerKey: map['triggerKey'] as String? ?? 'KEY_RIGHTCTRL',
           soundTheme: map['soundTheme'] as String? ?? 'subtle',
           inputMode: map['inputMode'] as String? ?? 'ptt',
+          dictateSttBackend: map['dictateSttBackend'] as String? ?? 'groq',
           wakePhrase: map['wakePhrase'] as String? ?? 'hey mira',
           vadTimeout: map['vadTimeout'] as int? ?? 8,
           autoEnter: map['autoEnter'] as bool? ?? true,
@@ -106,6 +109,7 @@ class AppSettings {
         'triggerKey': triggerKey,
         'soundTheme': soundTheme,
         'inputMode': inputMode,
+        'dictateSttBackend': dictateSttBackend,
         'wakePhrase': wakePhrase,
         'vadTimeout': vadTimeout,
         'autoEnter': autoEnter,

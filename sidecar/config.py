@@ -29,12 +29,20 @@ INPUT_MODE = os.getenv("DICTATE_INPUT", "ptt").lower()
 TRIGGER_KEY = os.getenv("DICTATE_KEY", "KEY_RIGHTCTRL")
 SOUND_THEME = os.getenv("DICTATE_SOUND_THEME", "subtle")
 WAKEWORD_THRESHOLD = float(os.getenv("DICTATE_WAKEWORD_THRESHOLD", "0.55"))
+STT_BACKEND = os.getenv("DICTATE_STT_BACKEND", "groq")  # groq | local
 
 # ── Paths ──
 
 AUDIOFILE = os.path.join(tempfile.gettempdir(), "dictate_p2t.wav")
 RAWFILE = os.path.join(tempfile.gettempdir(), "dictate_p2t.raw")
 SOUNDDIR = os.path.join(tempfile.gettempdir(), "dictate_sounds")
+
+# whisper.cpp local STT
+_PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
+WHISPER_BIN = os.path.join(_PROJECT_ROOT, "whisper.cpp", "build", "bin", "whisper-cli")
+WHISPER_MODEL = os.path.join(
+    os.getenv("HOME", "/tmp"), ".config", "talkye", "models", "ggml-medium.bin"
+)
 
 # ── Timing ──
 
@@ -107,7 +115,7 @@ def set_vad_active():
 def load_flutter_settings():
     """Read ~/.config/talkye/settings.json to pick up Flutter-saved settings."""
     global INPUT_MODE, TRIGGER_KEY, SOUND_THEME, VAD_ACTIVE_TIMEOUT, VAD_AUTO_ENTER
-    global WAKEWORD_THRESHOLD, WAKE_PHRASE
+    global WAKEWORD_THRESHOLD, WAKE_PHRASE, STT_BACKEND
     import json
     import logging
     logger = logging.getLogger(__name__)
@@ -139,5 +147,15 @@ def load_flutter_settings():
                 WAKE_PHRASE = cfg["wakePhrase"].lower().strip()
                 rebuild_strip_variants()
                 logger.info("Settings: wake_phrase='%s'", WAKE_PHRASE)
+            if "sttBackend" in cfg:
+                val = cfg["sttBackend"]
+                if val in ("groq", "local"):
+                    STT_BACKEND = val
+                    logger.info("Settings: stt_backend=%s", STT_BACKEND)
+            if "dictateSttBackend" in cfg:
+                val = cfg["dictateSttBackend"]
+                if val in ("groq", "local"):
+                    STT_BACKEND = val
+                    logger.info("Settings: stt_backend=%s (from dictateSttBackend)", STT_BACKEND)
     except Exception as e:
         logger.warning("Failed to load Flutter settings: %s", e)

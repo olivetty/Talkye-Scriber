@@ -14,7 +14,7 @@ import time
 import config
 from platform_utils import user_env, release_modifiers, xdotool_prefix
 from audio import find_audio_source, play_sound
-from transcribe import groq_transcribe, transcribe_and_paste
+from transcribe import groq_transcribe, local_transcribe, transcribe_and_paste
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +142,10 @@ def run_vad_listener():
             os.unlink(raw_path)
             is_active = time.monotonic() < config.vad_active_until
             vad_lang = (config.LANGUAGE if config.LANGUAGE != "auto" else None) if is_active else None
-            result = groq_transcribe(wav_path, vad_lang)
+            if config.STT_BACKEND == "local":
+                result = local_transcribe(wav_path, vad_lang)
+            else:
+                result = groq_transcribe(wav_path, vad_lang)
             os.unlink(wav_path)
             return result
         except Exception as e:
