@@ -48,13 +48,53 @@ fn lang_to_iso(lang: &str) -> &str {
     }
 }
 
+/// Resolve voice path to a .wav file for Chatterbox.
+/// Pocket TTS uses .safetensors, but Chatterbox needs the original .wav.
+/// Looks for a .wav file in the same directory.
+fn resolve_voice_wav(voice_path: &str) -> Option<String> {
+    if voice_path.is_empty() {
+        return None;
+    }
+    let path = std::path::Path::new(voice_path);
+
+    // Already a .wav file
+    if voice_path.ends_with(".wav") && path.exists() {
+        return Some(voice_path.to_string());
+    }
+
+    // For .safetensors, look for .wav in same directory
+    if let Some(dir) = path.parent() {
+        if dir.exists() {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if p.extension().and_then(|e| e.to_str()) == Some("wav") {
+                        let wav = p.to_string_lossy().to_string();
+                        tracing::info!("[TTS-SIDECAR] resolved voice: {voice_path} → {wav}");
+                        return Some(wav);
+                    }
+                }
+            }
+        }
+    }
+
+    tracing::warn!("[TTS-SIDECAR] no .wav found for voice: {voice_path}");
+    None
+}
+
 pub struct SidecarTts {
-    voice_ref: String,
+    voice_ref: Option<String>,
     speed: f32,
 }
 
 impl SidecarTts {
     pub fn new(config: &TtsConfig) -> Result<Self> {
+        let voice_ref = resolve_voice_wav(&config.voice);
+        tracing::info!(
+            "[TTS-SIDECAR] init: voice_ref={:?}",
+            voice_ref.as_deref().unwrap_or("none"),
+        );
+
         // Verify worker is reachable
         match TcpStream::connect_timeout(
             &format!("{WORKER_HOST}:{WORKER_PORT}").parse().unwrap(),
@@ -64,10 +104,7 @@ impl SidecarTts {
             Err(e) => tracing::warn!("[TTS-SIDECAR] worker not reachable: {e} — will retry on generate"),
         }
 
-        Ok(Self {
-            voice_ref: config.voice.clone(),
-            speed: config.speed,
-        })
+        Ok(Self { voice_ref, speed: config.speed })
     }
 }
 
@@ -82,17 +119,22 @@ impl TtsBackend for SidecarTts {
         let lang_id = lang_to_iso(language);
 
         // Build JSON payload
-        let voice_ref = if self.voice_ref.is_empty() || !std::path::Path::new(&self.voice_ref).exists() {
-            "null".to_string()
-        } else {
-            format!("\"{}\"", self.voice_ref.replace('\\', "\\\\").replace('"', "\\\""))
+        let voice_json = match &self.voice_ref {
+            Some(p) => format!("\"{}\"", p.replace('\\', "\\\\").replace('"', "\\\"")),
+            None => "null".to_string(),
         };
 
         let body = format!(
             r#"{{"text":"{}","language_id":"{}","voice_ref":{},"exaggeration":0.5,"cfg_weight":0.5,"temperature":0.8,"chunk_size":25,"context_window":50}}"#,
             text.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', " "),
             lang_id,
-            voice_ref,
+            voice_json,
+        );
+
+        tracing::info!(
+            "[TTS-SIDECAR] requesting: lang={lang_id} text=\"{}\" voice={:?}",
+            if text.len() > 60 { &text[..60] } else { text },
+            self.voice_ref.as_deref().unwrap_or("none"),
         );
 
         // Raw HTTP POST (avoids reqwest::blocking panic inside tokio runtime)
@@ -122,20 +164,38 @@ impl TtsBackend for SidecarTts {
         let mut first_chunk_ms = 0u64;
         let mut chunk_count = 0u32;
         let mut in_body = false;
+        let mut http_status = 0u16;
+        let mut body_lines: Vec<String> = Vec::new();
 
         for line_result in reader.lines() {
             let line = match line_result {
                 Ok(l) => l,
                 Err(e) => {
-                    // Read timeout or connection closed
                     if chunk_count > 0 { break; }
-                    return Err(e.into());
+                    return Err(anyhow::anyhow!("Read error from worker: {e}"));
                 }
             };
 
-            // Skip HTTP headers
+            // Parse HTTP status line
+            if http_status == 0 && line.starts_with("HTTP/") {
+                if let Some(code_str) = line.split_whitespace().nth(1) {
+                    http_status = code_str.parse().unwrap_or(0);
+                }
+                if http_status != 200 {
+                    tracing::error!("[TTS-SIDECAR] HTTP {http_status}: {line}");
+                }
+                continue;
+            }
+
+            // Skip HTTP headers, detect body start
             if !in_body {
                 if line.is_empty() { in_body = true; }
+                continue;
+            }
+
+            // Non-200: collect body for error message
+            if http_status != 200 {
+                body_lines.push(line);
                 continue;
             }
 
@@ -143,21 +203,26 @@ impl TtsBackend for SidecarTts {
             if !line.starts_with("data: ") { continue; }
             let json_str = &line[6..];
 
-            // Parse JSON
             let evt: serde_json::Value = match serde_json::from_str(json_str) {
                 Ok(v) => v,
-                Err(_) => continue,
+                Err(e) => {
+                    tracing::warn!("[TTS-SIDECAR] JSON parse error: {e} — line: {json_str}");
+                    continue;
+                }
             };
 
-            // Check for done/error
+            // Check for done
             if evt.get("done").and_then(|v| v.as_bool()).unwrap_or(false) {
                 tracing::info!(
-                    "[TTS-SIDECAR] stream done: {} chunks, {:.1}s audio",
+                    "[TTS-SIDECAR] stream done: {} chunks, {:.1}s audio, RTF={:.3}",
                     evt.get("chunks").and_then(|v| v.as_u64()).unwrap_or(0),
                     evt.get("total_audio").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                    evt.get("rtf").and_then(|v| v.as_f64()).unwrap_or(0.0),
                 );
                 break;
             }
+
+            // Check for error event
             if let Some(err) = evt.get("error").and_then(|v| v.as_str()) {
                 return Err(anyhow::anyhow!("Chatterbox worker error: {err}"));
             }
@@ -169,7 +234,6 @@ impl TtsBackend for SidecarTts {
                     pcm_b64,
                 ).context("base64 decode failed")?;
 
-                // Convert bytes to f32 samples (little-endian)
                 let samples: Vec<f32> = pcm_bytes
                     .chunks_exact(4)
                     .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
@@ -179,10 +243,24 @@ impl TtsBackend for SidecarTts {
                     chunk_count += 1;
                     if chunk_count == 1 {
                         first_chunk_ms = t0.elapsed().as_millis() as u64;
+                        tracing::info!("[TTS-SIDECAR] first chunk: {first_chunk_ms}ms, {} samples", samples.len());
                     }
                     on_chunk(&samples);
                 }
             }
+        }
+
+        // Report errors
+        if http_status != 200 && http_status != 0 {
+            let err_body = body_lines.join("\n");
+            return Err(anyhow::anyhow!(
+                "Chatterbox worker HTTP {http_status}: {}",
+                if err_body.len() > 300 { &err_body[..300] } else { &err_body }
+            ));
+        }
+
+        if chunk_count == 0 {
+            tracing::error!("[TTS-SIDECAR] no audio chunks received for: \"{text}\"");
         }
 
         let total_ms = t0.elapsed().as_millis() as u64;

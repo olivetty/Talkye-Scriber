@@ -74,10 +74,10 @@ impl Pipeline {
         }
 
         self.log("INFO", format!(
-            "Pipeline: STT (lang={}, backend={}) → Translate ({} → {}) → TTS (voice={}, speed={}x)",
+            "Pipeline: STT (lang={}, backend={}) → Translate ({} → {}) → TTS (backend={}, voice={}, speed={}x)",
             self.config.stt.language, self.config.stt.backend,
             self.config.translate.from_lang, self.config.translate.to_lang,
-            self.config.tts.voice, self.config.tts.speed,
+            self.config.tts.backend, self.config.tts.voice, self.config.tts.speed,
         ));
         self.log("INFO", format!(
             "Accumulator: first flush at {}w, then {}w",
