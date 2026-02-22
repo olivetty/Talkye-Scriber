@@ -230,13 +230,17 @@ class _AppShellState extends State<AppShell> with WindowListener {
         LogBuffer.add('SIDECAR: venv creation failed: ${venvResult.stderr}');
         return;
       }
-      final pipResult = await Process.run(
-        '$sidecarDir/venv/bin/pip', ['install', '-r', '$sidecarDir/requirements.txt', '-q'],
-      );
-      if (pipResult.exitCode != 0) {
-        LogBuffer.add('SIDECAR: pip install failed: ${pipResult.stderr}');
-        return;
-      }
+    }
+
+    // Always sync deps — pip is fast when everything is already installed
+    LogBuffer.add('SIDECAR: syncing dependencies...');
+    final pipResult = await Process.run(
+      '$sidecarDir/venv/bin/pip', ['install', '-r', '$sidecarDir/requirements.txt', '-q'],
+      environment: {'CMAKE_ARGS': '-DGGML_CUDA=on'},
+    );
+    if (pipResult.exitCode != 0) {
+      LogBuffer.add('SIDECAR: pip install failed: ${pipResult.stderr}');
+      // Continue anyway — existing deps might be enough
     }
 
     LogBuffer.add('SIDECAR: starting on :8179...');

@@ -312,13 +312,20 @@ def llm_status():
     """Local LLM status."""
     try:
         from llm_local import local_llm, _MODEL_PATH
+        # Check if llama-cpp-python is installed
+        try:
+            import llama_cpp
+            lib_installed = True
+        except ImportError:
+            lib_installed = False
         return {
             "available": local_llm.available,
             "loaded": local_llm.loaded,
             "model_path": _MODEL_PATH,
+            "lib_installed": lib_installed,
         }
     except ImportError:
-        return {"available": False, "loaded": False, "model_path": ""}
+        return {"available": False, "loaded": False, "model_path": "", "lib_installed": False}
 
 
 class LLMDownloadRequest(BaseModel):

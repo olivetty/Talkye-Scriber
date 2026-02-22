@@ -33,7 +33,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    _checkLlmStatus();
+    _checkLlmStatus().then((_) => _maybeAutoDownload());
   }
 
   @override
@@ -67,6 +67,36 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  Future<void> _maybeAutoDownload() async {
+    if (_llmAvailable || _llmLoaded || _downloading) return;
+    // Small delay so the screen renders first
+    await Future.delayed(const Duration(milliseconds: 500));
+    if (!mounted || _llmAvailable || _llmLoaded) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: C.level2,
+        title: const Text('Download AI Model?',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: C.text)),
+        content: const Text(
+          'Qwen3-1.7B (Q4_K_M) — ~1.1 GB\nRuns 100% offline on your GPU.\n\nDownload now?',
+          style: TextStyle(fontSize: 13, color: C.textSub, height: 1.5)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Later', style: TextStyle(color: C.textMuted))),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Download', style: TextStyle(color: C.accent))),
+        ],
+      ),
+    );
+    if (confirm == true && mounted) {
+      _downloadModel();
+    }
+  }
+
   Future<void> _downloadModel() async {
     setState(() => _downloading = true);
     try {
@@ -79,9 +109,12 @@ class _ChatScreenState extends State<ChatScreen> {
       c.close();
       final result = jsonDecode(data) as Map<String, dynamic>;
       if (result['ok'] == true) {
-        // Wait a bit for model to load
-        await Future.delayed(const Duration(seconds: 3));
-        await _checkLlmStatus();
+        // Poll until model is loaded (auto-load happens in sidecar)
+        for (var i = 0; i < 30; i++) {
+          await Future.delayed(const Duration(seconds: 2));
+          await _checkLlmStatus();
+          if (_llmLoaded) break;
+        }
       }
     } catch (e) {
       // ignore
