@@ -36,12 +36,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _fetchTtsStatusWithRetry() async {
-    // Sidecar may still be starting — retry a few times
+    // Sidecar may still be starting — retry until GPU detected
     for (var i = 0; i < 5; i++) {
       await _fetchTtsStatus();
-      if (_gpuBackend != 'cpu' || _chatterboxInstalled) return;
+      if (_gpuBackend != 'cpu') break;
       await Future.delayed(const Duration(seconds: 2));
       if (!mounted) return;
+    }
+    // If Chatterbox is selected but not loaded yet, keep polling
+    // (auto-load takes ~12s at startup)
+    if (widget.settings.ttsBackend == 'chatterbox' && !_chatterboxLoaded) {
+      for (var i = 0; i < 10; i++) {
+        await Future.delayed(const Duration(seconds: 2));
+        if (!mounted) return;
+        await _fetchTtsStatus();
+        if (_chatterboxLoaded) return;
+      }
     }
   }
 
