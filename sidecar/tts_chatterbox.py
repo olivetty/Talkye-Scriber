@@ -14,14 +14,11 @@ import io
 import json
 import logging
 import os
-import struct
 import subprocess
 import tempfile
 import threading
 import time
-import wave
 from pathlib import Path
-from typing import Optional
 
 from platform_utils import user_env
 

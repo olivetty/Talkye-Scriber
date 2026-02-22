@@ -87,7 +87,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (mounted) setState(() => _loadingChatterbox = false);
   }
 
-class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final locked = widget.engineRunning;

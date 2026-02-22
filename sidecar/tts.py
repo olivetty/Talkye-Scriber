@@ -60,7 +60,6 @@ def _get_active_voice() -> str | None:
     """Read activeVoicePath from Flutter settings."""
     try:
         if os.path.isfile(_SETTINGS_PATH):
-            import json
             with open(_SETTINGS_PATH) as f:
                 cfg = json.load(f)
             path = cfg.get("activeVoicePath", "")
@@ -111,7 +110,7 @@ def synthesize(text: str, output_path: str | None = None,
     Returns:
         {"ok": True, "path": str, "duration_ms": int, ...} or None
     """
-    if not is_available():
+    if not pocket_available():
         logger.warning("TTS binary not found: %s", _TTS_BIN)
         return None
 
