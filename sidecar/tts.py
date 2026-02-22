@@ -161,11 +161,19 @@ def speak(text: str, voice: str | None = None, speed: float = 1.0,
     """
     backend = get_backend_from_settings()
 
-    # Try Chatterbox if selected and available
+    # Try Chatterbox streaming if selected and available
     if backend == "chatterbox":
         try:
             from tts_chatterbox import chatterbox_tts
             if chatterbox_tts.available:
+                # Use streaming for lower latency
+                ok = chatterbox_tts.speak_stream(
+                    text, language_id=language_id, voice_ref=voice,
+                )
+                if ok:
+                    return True
+                # Fallback to non-streaming if stream fails
+                logger.warning("Chatterbox stream failed, trying non-streaming...")
                 ok = chatterbox_tts.speak(
                     text, language_id=language_id, voice_ref=voice,
                 )

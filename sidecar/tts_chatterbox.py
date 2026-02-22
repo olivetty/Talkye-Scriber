@@ -411,6 +411,117 @@ class ChatterboxTTS:
             except OSError:
                 pass
 
+    def speak_stream(
+        self,
+        text: str,
+        language_id: str = "en",
+        voice_ref: str | None = None,
+        exaggeration: float = 0.5,
+        cfg_weight: float = 0.5,
+        temperature: float = 0.8,
+        chunk_size: int = 25,
+        context_window: int = 50,
+    ) -> bool:
+        """Streaming TTS — plays audio chunks as they are generated.
+
+        Calls worker's /generate-stream SSE endpoint and pipes PCM to aplay.
+        Returns True on success.
+        """
+        import base64
+        import struct
+        import numpy as np
+
+        if not self.worker_running:
+            if not self.load():
+                return False
+        if not text.strip():
+            return False
+
+        if voice_ref is None:
+            voice_ref = _get_active_voice()
+
+        payload = {
+            "text": text,
+            "language_id": language_id,
+            "voice_ref": voice_ref,
+            "exaggeration": exaggeration,
+            "cfg_weight": cfg_weight,
+            "temperature": temperature,
+            "chunk_size": chunk_size,
+            "context_window": context_window,
+        }
+
+        url = f"{_WORKER_URL}/generate-stream"
+        try:
+            body = json.dumps(payload).encode()
+            req = urllib.request.Request(
+                url, data=body, method="POST",
+                headers={"Content-Type": "application/json",
+                         "Accept": "text/event-stream"},
+            )
+
+            env = user_env()
+            # Open aplay for raw PCM float32 streaming playback
+            aplay_proc = subprocess.Popen(
+                ["aplay", "-f", "FLOAT_LE", "-r", "24000", "-c", "1", "-t", "raw"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=env,
+            )
+
+            chunks_played = 0
+            with urllib.request.urlopen(req, timeout=300) as resp:
+                buf = b""
+                for raw_line in resp:
+                    line = raw_line.decode("utf-8", errors="replace").rstrip("\n\r")
+                    if not line.startswith("data: "):
+                        continue
+                    data_str = line[6:]
+                    try:
+                        evt = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+
+                    if evt.get("done"):
+                        logger.info(
+                            "Stream playback: %d chunks, %.1fs audio, RTF=%.3f",
+                            evt.get("chunks", 0),
+                            evt.get("total_audio", 0),
+                            evt.get("rtf", 0),
+                        )
+                        break
+
+                    if evt.get("error"):
+                        logger.error("Stream error: %s", evt["error"])
+                        break
+
+                    pcm_b64 = evt.get("chunk")
+                    if pcm_b64 and aplay_proc.stdin:
+                        pcm_bytes = base64.b64decode(pcm_b64)
+                        aplay_proc.stdin.write(pcm_bytes)
+                        aplay_proc.stdin.flush()
+                        chunks_played += 1
+
+                        if chunks_played == 1:
+                            latency = evt.get("first_chunk_latency", "?")
+                            logger.info("Stream: first audio chunk (latency=%s)", latency)
+
+            # Close aplay stdin to let it finish playing buffered audio
+            if aplay_proc.stdin:
+                aplay_proc.stdin.close()
+            aplay_proc.wait(timeout=30)
+            return chunks_played > 0
+
+        except Exception as e:
+            logger.error("Chatterbox stream failed: %s", e)
+            try:
+                aplay_proc.kill()
+            except Exception:
+                pass
+            return False
+
+
     def status(self) -> dict:
         """Return status info for API."""
         worker_status = None
