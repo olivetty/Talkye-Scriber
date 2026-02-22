@@ -46,6 +46,7 @@ sidecar/models/*.onnx
 
 # Pre-computed voice states (generated, not source)
 voices/*.safetensors
+voices/*.wav
 
 # whisper.cpp (compiled locally, not distributed)
 whisper.cpp/
