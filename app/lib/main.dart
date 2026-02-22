@@ -151,19 +151,36 @@ class AppSettings {
 }
 
 /// Global log buffer — collects engine logs for debugging.
+/// Uses a circular write index to avoid O(n) shifts.
 class LogBuffer {
-  static final List<String> _lines = [];
+  static final List<String?> _lines = List.filled(_maxLines, null);
   static const int _maxLines = 500;
+  static int _writeIdx = 0;
+  static int _count = 0;
 
   static void add(String line) {
     final ts = DateTime.now().toIso8601String().substring(11, 23);
-    _lines.add('[$ts] $line');
-    if (_lines.length > _maxLines) _lines.removeAt(0);
+    _lines[_writeIdx] = '[$ts] $line';
+    _writeIdx = (_writeIdx + 1) % _maxLines;
+    if (_count < _maxLines) _count++;
   }
 
-  static String get text => _lines.join('\n');
-  static int get length => _lines.length;
-  static void clear() => _lines.clear();
+  static String get text {
+    if (_count < _maxLines) {
+      return _lines.sublist(0, _count).whereType<String>().join('\n');
+    }
+    // Wrap around: oldest is at _writeIdx, newest at _writeIdx-1
+    final tail = _lines.sublist(_writeIdx).whereType<String>();
+    final head = _lines.sublist(0, _writeIdx).whereType<String>();
+    return [...tail, ...head].join('\n');
+  }
+
+  static int get length => _count;
+  static void clear() {
+    _lines.fillRange(0, _maxLines, null);
+    _writeIdx = 0;
+    _count = 0;
+  }
 }
 
 class AppShell extends StatefulWidget {

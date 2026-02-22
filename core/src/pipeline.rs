@@ -213,6 +213,12 @@ impl Pipeline {
             }
         }
 
+        // ── Graceful shutdown: drop senders to signal downstream tasks ──
+        self.log("INFO", "[PIPELINE] shutting down — closing channels".into());
+        drop(translate_tx);
+        drop(tts_tx);
+        // stt_rx will close when STT task drops its sender
+
         Ok(())
     }
 

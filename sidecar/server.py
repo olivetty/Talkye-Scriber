@@ -110,6 +110,31 @@ async def auto_load_chatterbox():
         except Exception as e:
             logger.info("Chatterbox auto-load skipped: %s", e)
     threading.Thread(target=_load, daemon=True, name="cbx-autoload").start()
+    # Start health monitor for chatterbox worker
+    asyncio.create_task(_monitor_chatterbox_worker())
+
+
+async def _monitor_chatterbox_worker():
+    """Periodic health check for the Chatterbox worker (port 8180)."""
+    import urllib.request
+    _consecutive_failures = 0
+    while True:
+        await asyncio.sleep(30)
+        try:
+            def _check():
+                req = urllib.request.Request("http://127.0.0.1:8180/health")
+                with urllib.request.urlopen(req, timeout=3) as resp:
+                    return resp.status == 200
+            ok = await asyncio.get_event_loop().run_in_executor(None, _check)
+            if ok:
+                _consecutive_failures = 0
+            else:
+                _consecutive_failures += 1
+        except Exception:
+            _consecutive_failures += 1
+        if _consecutive_failures >= 3:
+            logger.warning("[MONITOR] Chatterbox worker unreachable (%d consecutive failures)", _consecutive_failures)
+            _consecutive_failures = 0  # Reset to avoid log spam
 
 
 @app.on_event("shutdown")

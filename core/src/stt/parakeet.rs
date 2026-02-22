@@ -91,29 +91,75 @@ pub async fn run_parakeet_stt(
     run_vad_loop(model, vad, audio_rx, event_tx).await
 }
 
+/// Mutable VAD state — extracted to reduce duplication in the main loop.
+struct VadState {
+    audio_buf: Vec<f32>,
+    overlap_buf: Vec<f32>,
+    speech_active: bool,
+    silence_start: Option<Instant>,
+    last_interim: Instant,
+    speech_chunks_in_buf: u32,
+    idle_since: Option<Instant>,
+    first_flush_done: bool,
+    // Heartbeat
+    hb_timer: Instant,
+    hb_chunks: u64,
+    hb_speech: u64,
+    last_event_time: Instant,
+    stall_warned: bool,
+}
+
+impl VadState {
+    fn new() -> Self {
+        let now = Instant::now();
+        Self {
+            audio_buf: Vec::with_capacity(16000 * 10),
+            overlap_buf: Vec::new(),
+            speech_active: false,
+            silence_start: None,
+            last_interim: now,
+            speech_chunks_in_buf: 0,
+            idle_since: None,
+            first_flush_done: false,
+            hb_timer: now,
+            hb_chunks: 0,
+            hb_speech: 0,
+            last_event_time: now,
+            stall_warned: false,
+        }
+    }
+
+    /// Full reset — utterance boundary. Clears everything including overlap.
+    fn full_reset(&mut self, vad: &mut SileroVad) {
+        self.overlap_buf.clear();
+        self.audio_buf.clear();
+        self.speech_chunks_in_buf = 0;
+        vad.reset();
+        self.speech_active = false;
+        self.silence_start = None;
+        self.idle_since = None;
+        self.first_flush_done = false;
+        self.last_interim = Instant::now();
+        self.last_event_time = Instant::now();
+        self.stall_warned = false;
+    }
+
+    /// Soft reset after a flush — keeps speech_active and overlap.
+    fn soft_reset(&mut self) {
+        self.speech_chunks_in_buf = 0;
+        self.last_interim = Instant::now();
+        self.last_event_time = Instant::now();
+        self.stall_warned = false;
+    }
+}
+
 async fn run_vad_loop(
     mut model: parakeet_rs::ParakeetTDT,
     mut vad: SileroVad,
     mut audio_rx: mpsc::Receiver<AudioChunk>,
     event_tx: mpsc::Sender<SttEvent>,
 ) -> Result<()> {
-    let mut audio_buf: Vec<f32> = Vec::with_capacity(16000 * 10);
-    let mut overlap_buf: Vec<f32> = Vec::new(); // 300ms phonetic anchor
-    let mut speech_active = false;
-    let mut silence_start: Option<Instant> = None;
-    let mut last_interim = Instant::now();
-    let mut speech_chunks_in_buf: u32 = 0;
-    // When we enter "silence after flush" state, track how long we stay there.
-    let mut idle_since: Option<Instant> = None;
-    // First flush in utterance uses faster thresholds for lower initial latency.
-    let mut first_flush_done = false;
-
-    // Heartbeat
-    let mut hb_timer = Instant::now();
-    let mut hb_chunks: u64 = 0;
-    let mut hb_speech: u64 = 0;
-    let mut last_event_time = Instant::now();
-    let mut stall_warned = false;
+    let mut st = VadState::new();
 
     tracing::info!("[STT-PARAKEET] ready (VAD + 300ms overlap anchor)...");
 
@@ -122,60 +168,54 @@ async fn run_vad_loop(
         let vad_prob = vad.avg_probability(&samples)?;
         let is_speech = vad_prob > VAD_SPEECH_THRESHOLD;
 
-        hb_chunks += 1;
-        if is_speech { hb_speech += 1; }
-        if hb_timer.elapsed().as_secs() >= 5 {
-            let stall = last_event_time.elapsed().as_secs();
+        st.hb_chunks += 1;
+        if is_speech { st.hb_speech += 1; }
+        if st.hb_timer.elapsed().as_secs() >= 5 {
+            let stall = st.last_event_time.elapsed().as_secs();
             tracing::info!(
-                "[STT-PARAKEET] heartbeat: chunks={hb_chunks} speech={hb_speech} \
-                 vad={vad_prob:.2} active={speech_active} buf={}ms \
-                 overlap={}ms spk_in_buf={speech_chunks_in_buf} last_evt={}s",
-                samples_to_ms(audio_buf.len()),
-                samples_to_ms(overlap_buf.len()), stall,
+                "[STT-PARAKEET] heartbeat: chunks={} speech={} \
+                 vad={vad_prob:.2} active={} buf={}ms \
+                 overlap={}ms spk_in_buf={} last_evt={}s",
+                st.hb_chunks, st.hb_speech, st.speech_active,
+                samples_to_ms(st.audio_buf.len()),
+                samples_to_ms(st.overlap_buf.len()),
+                st.speech_chunks_in_buf, stall,
             );
-            if stall >= 10 && !stall_warned {
+            if stall >= 10 && !st.stall_warned {
                 tracing::warn!("[STT-PARAKEET] STALL: no events for {stall}s!");
-                stall_warned = true;
+                st.stall_warned = true;
             }
-            hb_timer = Instant::now();
-            hb_chunks = 0;
-            hb_speech = 0;
+            st.hb_timer = Instant::now();
+            st.hb_chunks = 0;
+            st.hb_speech = 0;
         }
 
         if is_speech {
-            if !speech_active {
-                speech_active = true;
-                silence_start = None;
-                idle_since = None;
-            } else {
-                silence_start = None;
-                idle_since = None;
-            }
-            audio_buf.extend_from_slice(&samples);
-            speech_chunks_in_buf += 1;
+            st.speech_active = true;
+            st.silence_start = None;
+            st.idle_since = None;
+            st.audio_buf.extend_from_slice(&samples);
+            st.speech_chunks_in_buf += 1;
 
-            let buffer_ms = samples_to_ms(audio_buf.len());
+            let buffer_ms = samples_to_ms(st.audio_buf.len());
             if buffer_ms >= MAX_FLUSH_MS {
                 tracing::info!("[STT-PARAKEET] forced flush ({buffer_ms}ms continuous)");
-                do_flush(&mut model, &mut audio_buf, &mut overlap_buf,
+                do_flush(&mut model, &mut st.audio_buf, &mut st.overlap_buf,
                          &event_tx, false).await;
-                speech_chunks_in_buf = 0;
-                last_interim = Instant::now();
-                last_event_time = Instant::now();
-                stall_warned = false;
+                st.soft_reset();
             }
-        } else if speech_active {
-            audio_buf.extend_from_slice(&samples);
+        } else if st.speech_active {
+            st.audio_buf.extend_from_slice(&samples);
 
-            if silence_start.is_none() {
-                silence_start = Some(Instant::now());
+            if st.silence_start.is_none() {
+                st.silence_start = Some(Instant::now());
             }
-            let silence_ms = silence_start.unwrap().elapsed().as_millis() as u64;
-            let buffer_ms = samples_to_ms(audio_buf.len());
+            let silence_ms = st.silence_start.unwrap().elapsed().as_millis() as u64;
+            let buffer_ms = samples_to_ms(st.audio_buf.len());
 
             // Smart flush: use faster thresholds for first flush in utterance
-            let flush_ms = if first_flush_done { MIN_FLUSH_MS } else { FIRST_FLUSH_MS };
-            let silence_needed = if first_flush_done { MIN_SILENCE_FOR_FLUSH_MS } else { FIRST_SILENCE_FOR_FLUSH_MS };
+            let flush_ms = if st.first_flush_done { MIN_FLUSH_MS } else { FIRST_FLUSH_MS };
+            let silence_needed = if st.first_flush_done { MIN_SILENCE_FOR_FLUSH_MS } else { FIRST_SILENCE_FOR_FLUSH_MS };
 
             if buffer_ms >= flush_ms
                 && silence_ms >= silence_needed
@@ -183,93 +223,65 @@ async fn run_vad_loop(
             {
                 tracing::info!(
                     "[STT-PARAKEET] smart flush ({buffer_ms}ms, silence={silence_ms}ms, \
-                     spk={speech_chunks_in_buf}, first={})",
-                    !first_flush_done
+                     spk={}, first={})",
+                    st.speech_chunks_in_buf, !st.first_flush_done
                 );
-                first_flush_done = true;
-                do_flush(&mut model, &mut audio_buf, &mut overlap_buf,
+                st.first_flush_done = true;
+                do_flush(&mut model, &mut st.audio_buf, &mut st.overlap_buf,
                          &event_tx, false).await;
-                speech_chunks_in_buf = 0;
-                // speech_active stays TRUE
-                last_interim = Instant::now();
-                last_event_time = Instant::now();
-                stall_warned = false;
-                silence_start = None;
+                st.soft_reset();
+                st.silence_start = None;
                 continue;
             }
 
             // Interim results
-            if last_interim.elapsed().as_millis() as u64 >= INTERIM_INTERVAL_MS
-                && audio_buf.len() > 4800 && speech_chunks_in_buf > 0
+            if st.last_interim.elapsed().as_millis() as u64 >= INTERIM_INTERVAL_MS
+                && st.audio_buf.len() > 4800 && st.speech_chunks_in_buf > 0
             {
-                if let Some(text) = transcribe_with_anchor(&mut model, &audio_buf, &overlap_buf) {
+                if let Some(text) = transcribe_with_anchor(&mut model, &st.audio_buf, &st.overlap_buf) {
                     if !text.is_empty() {
                         send_event(&event_tx, SttEvent::Interim(text)).await;
                     }
                 }
-                last_interim = Instant::now();
+                st.last_interim = Instant::now();
             }
 
             // Utterance end: extended silence
             if silence_ms >= SILENCE_TRIGGER_MS {
-                if speech_chunks_in_buf > 0 && audio_buf.len() >= MIN_TRANSCRIBE_SAMPLES {
+                if st.speech_chunks_in_buf > 0 && st.audio_buf.len() >= MIN_TRANSCRIBE_SAMPLES {
                     tracing::info!(
                         "[STT-PARAKEET] utterance end (buf={buffer_ms}ms, \
-                         spk={speech_chunks_in_buf})"
+                         spk={})", st.speech_chunks_in_buf
                     );
                     if let Some(text) = transcribe_with_anchor(
-                        &mut model, &audio_buf, &overlap_buf
+                        &mut model, &st.audio_buf, &st.overlap_buf
                     ) {
                         if !text.is_empty() {
                             emit_final(&event_tx, &text, true).await;
                         }
                     }
-                    // Real utterance end — full reset, clear overlap too
-                    overlap_buf.clear();
-                    audio_buf.clear();
-                    speech_chunks_in_buf = 0;
-                    vad.reset();
-                    speech_active = false;
-                    silence_start = None;
-                    idle_since = None;
-                    first_flush_done = false;
-                    last_interim = Instant::now();
+                    st.full_reset(&mut vad);
                     send_event(&event_tx, SttEvent::UtteranceEnd).await;
-                    last_event_time = Instant::now();
-                    stall_warned = false;
-                } else if speech_chunks_in_buf == 0 {
-                    // Pure silence after a smart flush.
-                    // Keep speech_active for a while to allow continuation,
-                    // but if idle too long (5s), do full reset to prevent stall.
-                    if idle_since.is_none() {
-                        idle_since = Some(Instant::now());
+                } else if st.speech_chunks_in_buf == 0 {
+                    // Pure silence after a smart flush — allow continuation briefly
+                    if st.idle_since.is_none() {
+                        st.idle_since = Some(Instant::now());
                     }
-                    let idle_ms = idle_since.unwrap().elapsed().as_millis() as u64;
+                    let idle_ms = st.idle_since.unwrap().elapsed().as_millis() as u64;
 
                     if idle_ms >= 5000 {
-                        // Idle too long — full reset
                         tracing::info!(
                             "[STT-PARAKEET] idle timeout after flush ({idle_ms}ms) — full reset"
                         );
-                        overlap_buf.clear();
-                        audio_buf.clear();
-                        speech_chunks_in_buf = 0;
-                        vad.reset();
-                        speech_active = false;
-                        silence_start = None;
-                        idle_since = None;
-                        first_flush_done = false;
-                        last_interim = Instant::now();
+                        st.full_reset(&mut vad);
                         send_event(&event_tx, SttEvent::UtteranceEnd).await;
-                        last_event_time = Instant::now();
-                        stall_warned = false;
                     } else {
                         tracing::debug!(
                             "[STT-PARAKEET] silence after flush ({buffer_ms}ms, idle={idle_ms}ms) \
                              — clearing, keeping speech_active"
                         );
-                        audio_buf.clear();
-                        silence_start = None;
+                        st.audio_buf.clear();
+                        st.silence_start = None;
                     }
                 } else {
                     // Has some speech but too short — transcribe anyway
@@ -277,40 +289,23 @@ async fn run_vad_loop(
                         "[STT-PARAKEET] utterance end short ({buffer_ms}ms) — transcribing"
                     );
                     if let Some(text) = transcribe_with_anchor(
-                        &mut model, &audio_buf, &overlap_buf
+                        &mut model, &st.audio_buf, &st.overlap_buf
                     ) {
                         if !text.is_empty() {
                             emit_final(&event_tx, &text, true).await;
                         }
                     }
-                    overlap_buf.clear();
-                    audio_buf.clear();
-                    speech_chunks_in_buf = 0;
-                    vad.reset();
-                    speech_active = false;
-                    silence_start = None;
-                    idle_since = None;
-                    first_flush_done = false;
-                    last_interim = Instant::now();
+                    st.full_reset(&mut vad);
                     send_event(&event_tx, SttEvent::UtteranceEnd).await;
-                    last_event_time = Instant::now();
-                    stall_warned = false;
                 }
             }
 
             // Force transcription if buffer too long
             if buffer_ms >= MAX_BUFFER_MS {
                 tracing::info!("[STT-PARAKEET] max buffer ({buffer_ms}ms), forcing");
-                do_flush(&mut model, &mut audio_buf, &mut overlap_buf,
+                do_flush(&mut model, &mut st.audio_buf, &mut st.overlap_buf,
                          &event_tx, false).await;
-                speech_chunks_in_buf = 0;
-                speech_active = false;
-                silence_start = None;
-                idle_since = None;
-                first_flush_done = false;
-                last_interim = Instant::now();
-                last_event_time = Instant::now();
-                stall_warned = false;
+                st.full_reset(&mut vad);
             }
         }
     }
