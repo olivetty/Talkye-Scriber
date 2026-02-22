@@ -284,14 +284,17 @@ def download_model(progress_callback=None) -> bool:
     try:
         import urllib.request
 
+        _last_log = [0]
         def _reporthook(block_num, block_size, total_size):
             downloaded = block_num * block_size
             if progress_callback:
                 progress_callback(downloaded, total_size)
-            if block_num % 100 == 0:
-                mb = downloaded / 1024 / 1024
+            # Log every ~50 MB to avoid spam
+            mb = downloaded / 1024 / 1024
+            if mb - _last_log[0] >= 50:
+                _last_log[0] = mb
                 total_mb = total_size / 1024 / 1024 if total_size > 0 else 0
-                logger.info("Download: %.1f / %.1f MB", mb, total_mb)
+                logger.info("Download: %.0f / %.0f MB", mb, total_mb)
 
         urllib.request.urlretrieve(url, tmp_path, reporthook=_reporthook)
         os.rename(tmp_path, _MODEL_PATH)
