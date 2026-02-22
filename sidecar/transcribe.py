@@ -1,6 +1,7 @@
 """Talkye Sidecar — Transcription pipeline.
 
-Groq STT, hallucination filtering, wake-phrase stripping, dictation output.
+Groq STT, local whisper.cpp, hallucination filtering, wake-phrase stripping,
+dictation output.
 """
 
 import logging
@@ -31,7 +32,6 @@ def groq_transcribe(audio_path: str, language: str = None) -> dict:
                 return config.core.transcribe(audio_path, None)
             _groq_client = openai.OpenAI(api_key=key, base_url="https://api.groq.com/openai/v1")
 
-        # Prompt hint helps Whisper correctly transcribe the wake phrase
         prompt_hint = f'{config.WAKE_PHRASE.title()}. '
 
         with open(audio_path, "rb") as audio_file:
@@ -52,6 +52,55 @@ def groq_transcribe(audio_path: str, language: str = None) -> dict:
     except Exception as e:
         logger.warning("Groq transcription failed: %s, falling back", e)
         return config.core.transcribe(audio_path, None)
+
+
+# ── Local whisper.cpp STT ──
+
+
+def local_transcribe(audio_path: str, language: str = None) -> dict:
+    """Transcribe via local whisper.cpp binary (GPU-accelerated)."""
+    import subprocess
+    try:
+        # Use large-v3 for translate (turbo doesn't support it)
+        model = config.WHISPER_MODEL_TRANSLATE if config.DICTATE_TRANSLATE else config.WHISPER_MODEL
+        cmd = [
+            config.WHISPER_BIN,
+            "-m", model,
+            "-f", audio_path,
+            "--no-timestamps",
+            "-np",
+            "-t", "4",
+        ]
+        if config.DICTATE_TRANSLATE:
+            cmd.append("--translate")
+        if language:
+            cmd += ["-l", language]
+        else:
+            cmd += ["-l", "auto"]
+
+        t0 = time.monotonic()
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        elapsed = time.monotonic() - t0
+
+        text = result.stdout.strip()
+        text = " ".join(text.split())
+        mode = "translate" if config.DICTATE_TRANSLATE else "transcribe"
+        logger.info("Local %s (%.1fs) [%s]: %s",
+                     mode, elapsed, language or "auto", text)
+        return {"text": text, "language": language or "auto", "duration": elapsed}
+    except Exception as e:
+        logger.warning("Local transcription failed: %s, falling back to Groq", e)
+        return groq_transcribe(audio_path, language)
+
+
+# ── STT router ──
+
+
+def _transcribe(audio_path: str, language: str = None) -> dict:
+    """Route to the configured STT backend."""
+    if config.STT_BACKEND == "local":
+        return local_transcribe(audio_path, language)
+    return groq_transcribe(audio_path, language)
 
 
 # ── Whisper hallucination filter ──
@@ -80,19 +129,15 @@ def _strip_wake_phrase(text: str) -> str | None:
         return text
 
     import re
-    # Split text into words, preserving positions for reconstruction
-    # word_spans: list of (word_lowercase, start_idx, end_idx)
     word_spans = [(m.group().lower(), m.start(), m.end())
                   for m in re.finditer(r"[a-zA-ZÀ-ÿ']+", text)]
 
     if len(word_spans) < len(config.wake_phrase_words):
         return text
 
-    # Normalize a word using phonetic map
     def normalize(w: str) -> str:
         return config._PHONETIC_MAP.get(w, w)
 
-    # Check if first N words match the wake phrase (with phonetic normalization)
     n = len(config.wake_phrase_words)
     match = True
     for i in range(n):
@@ -103,11 +148,9 @@ def _strip_wake_phrase(text: str) -> str | None:
     if not match:
         return text
 
-    # Wake phrase matched — find where the rest starts
     if len(word_spans) <= n:
-        return None  # Only the wake phrase, nothing else
+        return None
 
-    # Start from after the last matched word, skip punctuation/spaces
     rest_start = word_spans[n - 1][2]
     while rest_start < len(text) and text[rest_start] in ' ,.!?;:-\n\t':
         rest_start += 1
@@ -122,7 +165,7 @@ def transcribe_and_paste(prefetched_result=None):
     """Transcribe audio, auto-detect commands vs dictation.
 
     Args:
-        prefetched_result: If provided, skip Groq call and use this result directly
+        prefetched_result: If provided, skip transcription and use this result directly
                           (from speculative transcription).
     """
     import subprocess
@@ -142,9 +185,9 @@ def transcribe_and_paste(prefetched_result=None):
         elif is_vad:
             is_active = time.monotonic() < config.vad_active_until
             vad_lang = (config.LANGUAGE if config.LANGUAGE != "auto" else None) if is_active else None
-            result = groq_transcribe(config.AUDIOFILE, vad_lang)
+            result = _transcribe(config.AUDIOFILE, vad_lang)
         else:
-            result = config.core.transcribe(config.AUDIOFILE, lang)
+            result = _transcribe(config.AUDIOFILE, lang)
 
         text = result.get("text", "").strip()
         detected_lang = result.get("language", "?")
@@ -161,11 +204,10 @@ def transcribe_and_paste(prefetched_result=None):
         word_count = len(text.split())
 
         # In VAD mode, strip wake phrase from transcription
-        # (Rustpotter detects at audio level, but Whisper still transcribes it)
         if is_vad:
             stripped = _strip_wake_phrase(text)
             if stripped is None:
-                return  # Only the wake phrase, nothing else
+                return
             text = stripped
             word_count = len(text.split())
 
@@ -173,12 +215,11 @@ def transcribe_and_paste(prefetched_result=None):
         if word_count <= config.MAX_COMMAND_WORDS:
             cmd_ids = detect_command(text)
             if cmd_ids:
-                _cmd_executed = execute_commands(cmd_ids)  # True if terminal command
+                _cmd_executed = execute_commands(cmd_ids)
                 return
 
-        # Normal dictation — leading space in VAD mode for segment separation
-        if is_vad:
-            text = " " + text
+        # Normal dictation — leading space for segment separation
+        text = " " + text
 
         use_cleanup = config.LLM_CLEANUP
         use_translate = config.TRANSLATE_TO if config.TRANSLATE_ENABLED else None
@@ -205,13 +246,12 @@ def transcribe_and_paste(prefetched_result=None):
                 os.unlink(f)
             except OSError:
                 pass
-        # In VAD mode, keep session active after every segment (text, command, or skip).
-        # Session ends only when VAD timeout expires with no speech.
         if config.INPUT_MODE == "vad":
             if _cmd_executed:
-                # Command = final action. Kill session silently (no "done" sound).
                 config.vad_active_until = 0.0
                 config.vad_silent_end = True
-            else:
+                config.vad_cooldown_until = time.monotonic() + 2.0
+            elif time.monotonic() < config.vad_active_until:
+                # Only refresh if session is still active — don't resurrect expired sessions
                 config.set_vad_active()
         config.busy = False

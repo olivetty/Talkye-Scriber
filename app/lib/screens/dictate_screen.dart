@@ -480,7 +480,7 @@ class _DictateScreenState extends State<DictateScreen> {
         const SizedBox(height: 12),
         _row('Sound', _soundDropdown()),
         const SizedBox(height: 12),
-        _row('STT Engine', _sttBackendDropdown()),
+        _row('Translate', _translateToggle()),
       ]),
     );
   }
@@ -535,14 +535,45 @@ class _DictateScreenState extends State<DictateScreen> {
 
   Widget _langDropdown() {
     const langs = [
-      ('auto', 'Autodetect'), ('ro', 'Romanian'), ('en', 'English'),
-      ('es', 'Spanish'), ('fr', 'French'), ('de', 'German'),
-      ('it', 'Italian'), ('pt', 'Portuguese'),
+      ('auto', 'Autodetect'),
+      ('ar', 'Arabic'),
+      ('bg', 'Bulgarian'),
+      ('ca', 'Catalan'),
+      ('zh', 'Chinese'),
+      ('hr', 'Croatian'),
+      ('cs', 'Czech'),
+      ('da', 'Danish'),
+      ('nl', 'Dutch'),
+      ('en', 'English'),
+      ('fi', 'Finnish'),
+      ('fr', 'French'),
+      ('de', 'German'),
+      ('el', 'Greek'),
+      ('hi', 'Hindi'),
+      ('hu', 'Hungarian'),
+      ('id', 'Indonesian'),
+      ('it', 'Italian'),
+      ('ja', 'Japanese'),
+      ('ko', 'Korean'),
+      ('no', 'Norwegian'),
+      ('pl', 'Polish'),
+      ('pt', 'Portuguese'),
+      ('ro', 'Romanian'),
+      ('ru', 'Russian'),
+      ('sr', 'Serbian'),
+      ('sk', 'Slovak'),
+      ('es', 'Spanish'),
+      ('sv', 'Swedish'),
+      ('th', 'Thai'),
+      ('tr', 'Turkish'),
+      ('uk', 'Ukrainian'),
+      ('vi', 'Vietnamese'),
     ];
     return PopupMenuButton<String>(
       onSelected: (v) => _updateConfig({'language': v}),
       offset: const Offset(0, 32), color: C.level3,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      constraints: const BoxConstraints(maxHeight: 400),
       itemBuilder: (_) => langs.map((e) => PopupMenuItem(
         value: e.$1, height: 34,
         child: Text(e.$2, style: TextStyle(fontSize: 12,
@@ -605,36 +636,29 @@ class _DictateScreenState extends State<DictateScreen> {
     );
   }
 
-  Widget _sttBackendDropdown() {
-    const backends = [
-      ('groq', 'Groq Cloud'),
-      ('local', 'Whisper Local'),
-    ];
-    final current = widget.settings.dictateSttBackend;
-    return PopupMenuButton<String>(
-      onSelected: (v) {
-        widget.settings.dictateSttBackend = v;
+  Widget _translateToggle() {
+    final on = widget.settings.dictateTranslate;
+    return GestureDetector(
+      onTap: _connected ? () {
+        final v = !on;
+        widget.settings.dictateTranslate = v;
         widget.settings.save();
-        _updateConfig({'stt_backend': v});
+        _post('/dictate/config', {'dictate_translate': v});
         setState(() {});
-      },
-      offset: const Offset(0, 32), color: C.level3,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      itemBuilder: (_) => backends.map((e) => PopupMenuItem(
-        value: e.$1, height: 38,
-        child: Text(e.$2, style: TextStyle(fontSize: 12,
-          color: e.$1 == current ? C.accent : C.text,
-          fontWeight: e.$1 == current ? FontWeight.w600 : FontWeight.w400)),
-      )).toList(),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(color: C.level2, borderRadius: BorderRadius.circular(6)),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Text(backends.firstWhere((e) => e.$1 == current, orElse: () => backends.first).$2,
-            style: const TextStyle(fontSize: 12, color: C.text, fontWeight: FontWeight.w500)),
-          const SizedBox(width: 4),
-          const Icon(Icons.expand_more_rounded, size: 14, color: C.textMuted),
-        ]),
+      } : null,
+      child: MouseRegion(
+        cursor: _connected ? SystemMouseCursors.click : SystemMouseCursors.basic,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(color: C.level2, borderRadius: BorderRadius.circular(6)),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Text(on ? 'English' : 'Off',
+              style: TextStyle(fontSize: 12, color: on ? C.accent : C.text, fontWeight: FontWeight.w500)),
+            const SizedBox(width: 4),
+            Icon(on ? Icons.translate_rounded : Icons.translate_rounded,
+              size: 14, color: on ? C.accent : C.textMuted),
+          ]),
+        ),
       ),
     );
   }

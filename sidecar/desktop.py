@@ -33,9 +33,9 @@ def main():
     config.load_flutter_settings()
 
     logger.info("Dictate desktop client starting (%s)", config.PLATFORM)
-    logger.info("Input: %s | Mode: %s | Language: %s | Wake phrase: '%s' | Threshold: %.2f | STT: %s",
+    logger.info("Input: %s | Mode: %s | Language: %s | Wake phrase: '%s' | Threshold: %.2f | STT: %s | Translate: %s",
                 config.INPUT_MODE, config.core.mode, config.LANGUAGE, config.WAKE_PHRASE,
-                config.WAKEWORD_THRESHOLD, config.STT_BACKEND)
+                config.WAKEWORD_THRESHOLD, config.STT_BACKEND, config.DICTATE_TRANSLATE)
 
     if config.LLM_CLEANUP or config.TRANSLATE_ENABLED:
         features = []

@@ -114,6 +114,7 @@ class DictateConfig(BaseModel):
     trigger_key: Optional[str] = None
     sound_theme: Optional[str] = None  # subtle | silent | alex | luna
     stt_backend: Optional[str] = None  # groq | local
+    dictate_translate: Optional[bool] = None  # translate to English via whisper
     vad_timeout: Optional[int] = None
     auto_enter: Optional[bool] = None
 
@@ -132,6 +133,7 @@ def dictate_status():
         "trigger_key": cfg.TRIGGER_KEY,
         "sound_theme": cfg.SOUND_THEME,
         "stt_backend": cfg.STT_BACKEND,
+        "dictate_translate": cfg.DICTATE_TRANSLATE,
         "vad_timeout": cfg.VAD_ACTIVE_TIMEOUT,
         "auto_enter": cfg.VAD_AUTO_ENTER,
     }
@@ -157,6 +159,9 @@ def dictate_config(cfg: DictateConfig):
     if cfg.stt_backend is not None and cfg.stt_backend in ("groq", "local"):
         _cfg.STT_BACKEND = cfg.stt_backend
         logger.info("STT backend changed to: %s", cfg.stt_backend)
+    if cfg.dictate_translate is not None:
+        _cfg.DICTATE_TRANSLATE = cfg.dictate_translate
+        logger.info("Dictate translate changed to: %s", cfg.dictate_translate)
     if cfg.vad_timeout is not None:
         _cfg.VAD_ACTIVE_TIMEOUT = cfg.vad_timeout
         logger.info("VAD timeout changed to: %ds", cfg.vad_timeout)

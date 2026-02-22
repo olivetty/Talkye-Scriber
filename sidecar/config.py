@@ -29,7 +29,8 @@ INPUT_MODE = os.getenv("DICTATE_INPUT", "ptt").lower()
 TRIGGER_KEY = os.getenv("DICTATE_KEY", "KEY_RIGHTCTRL")
 SOUND_THEME = os.getenv("DICTATE_SOUND_THEME", "subtle")
 WAKEWORD_THRESHOLD = float(os.getenv("DICTATE_WAKEWORD_THRESHOLD", "0.55"))
-STT_BACKEND = os.getenv("DICTATE_STT_BACKEND", "groq")  # groq | local
+STT_BACKEND = os.getenv("DICTATE_STT_BACKEND", "local")  # groq | local
+DICTATE_TRANSLATE = os.getenv("DICTATE_TRANSLATE", "false").lower() == "true"
 
 # ── Paths ──
 
@@ -41,7 +42,10 @@ SOUNDDIR = os.path.join(tempfile.gettempdir(), "dictate_sounds")
 _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
 WHISPER_BIN = os.path.join(_PROJECT_ROOT, "whisper.cpp", "build", "bin", "whisper-cli")
 WHISPER_MODEL = os.path.join(
-    os.getenv("HOME", "/tmp"), ".config", "talkye", "models", "ggml-medium.bin"
+    os.getenv("HOME", "/tmp"), ".config", "talkye", "models", "ggml-large-v3-turbo.bin"
+)
+WHISPER_MODEL_TRANSLATE = os.path.join(
+    os.getenv("HOME", "/tmp"), ".config", "talkye", "models", "ggml-large-v3.bin"
 )
 
 # ── Timing ──
@@ -115,7 +119,7 @@ def set_vad_active():
 def load_flutter_settings():
     """Read ~/.config/talkye/settings.json to pick up Flutter-saved settings."""
     global INPUT_MODE, TRIGGER_KEY, SOUND_THEME, VAD_ACTIVE_TIMEOUT, VAD_AUTO_ENTER
-    global WAKEWORD_THRESHOLD, WAKE_PHRASE, STT_BACKEND
+    global WAKEWORD_THRESHOLD, WAKE_PHRASE, STT_BACKEND, DICTATE_TRANSLATE
     import json
     import logging
     logger = logging.getLogger(__name__)
@@ -157,5 +161,8 @@ def load_flutter_settings():
                 if val in ("groq", "local"):
                     STT_BACKEND = val
                     logger.info("Settings: stt_backend=%s (from dictateSttBackend)", STT_BACKEND)
+            if "dictateTranslate" in cfg:
+                DICTATE_TRANSLATE = bool(cfg["dictateTranslate"])
+                logger.info("Settings: dictate_translate=%s", DICTATE_TRANSLATE)
     except Exception as e:
         logger.warning("Failed to load Flutter settings: %s", e)

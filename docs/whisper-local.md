@@ -2,9 +2,10 @@
 
 ## Current State
 - whisper.cpp compiled with CUDA on dev machine (RTX 4070)
-- Model: ggml-medium.bin (1.5GB) at ~/.config/talkye/models/
-- Integrated as `local` backend in sidecar (alongside `groq`)
-- Flutter setting: STT Engine dropdown (Groq Cloud / Whisper Local)
+- Default model: ggml-large-v3-turbo.bin (1.6GB) at ~/.config/talkye/models/
+- Integrated as `local` backend in sidecar (default, alongside `groq` fallback)
+- Flutter setting: Dictation Engine in Settings page (Whisper Local / Groq Cloud)
+- Transcription speed: ~1.2-1.5s per segment on RTX 4070
 
 ## Architecture
 ```
@@ -51,31 +52,56 @@ Download from: https://huggingface.co/ggerganov/whisper.cpp/tree/main
 | ggml-base.bin | 142MB | OK | ~150ms |
 | ggml-small.bin | 466MB | Good | ~300ms |
 | ggml-medium.bin | 1.5GB | Great | ~500ms |
-| ggml-large-v3.bin | 3.1GB | Best | ~800ms |
+| ggml-large-v3-turbo.bin | 1.6GB | Near-best | ~1.2s |
+| ggml-large-v3.bin | 3.1GB | Best | ~2-3s |
 
-Recommended: medium for balanced quality/speed, large-v3 for max quality.
+Default: large-v3-turbo (best quality/speed ratio, same size as medium).
 
 ## Auto-download for end users
 When user selects "Whisper Local" for the first time:
 1. Check if whisper-cli binary exists → if not, show "Setup required" dialog
 2. Check if model file exists → if not, download automatically
-3. Download URL: `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin`
-4. Store at: `~/.config/talkye/models/ggml-medium.bin`
-5. Show progress bar during download (~1.5GB)
+3. Download URL: `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin`
+4. Store at: `~/.config/talkye/models/ggml-large-v3-turbo.bin`
+5. Show progress bar during download (~1.6GB)
 
 Future: bundle whisper-cli binary per platform in app installer.
 
-## Streaming (future)
-whisper.cpp has a `--stream` mode that processes audio incrementally.
-Instead of batch (record → transcribe → paste), it would:
-1. Start whisper-cli in stream mode with mic input
-2. Read partial transcriptions from stdout
-3. Type text as it appears (word by word)
+## Streaming (future — high priority)
+Current flow: record segment → transcribe entire file → paste all at once.
+Goal: text appears word-by-word as user speaks.
 
-This requires a different integration (long-running process instead of
-one-shot subprocess), but the binary already supports it.
+### Option A: whisper-server (recommended)
+whisper.cpp ships a built-in HTTP server with streaming support:
+```bash
+whisper.cpp/build/bin/whisper-server -m model.bin --port 8178 -l auto
+```
+- Keeps model loaded in VRAM permanently (~2.5GB for large-v3-turbo)
+- Accepts audio chunks via HTTP/WebSocket
+- Returns partial transcriptions incrementally
+- Much faster per-request (no model load/unload overhead)
+- Integration: send audio chunks from VAD → read streaming response → type_chunk()
 
-Command: `whisper-cli --stream -m model.bin -l auto --no-timestamps`
+### Option B: whisper-cli --stream mode
+```bash
+whisper-cli --stream -m model.bin -l auto --no-timestamps
+```
+- Reads from microphone directly (bypasses our VAD)
+- Outputs text incrementally to stdout
+- Simpler but less control over VAD/wake word integration
+
+### Option C: Python bindings (pywhispercpp / faster-whisper)
+- Load model once in Python process
+- Feed audio segments directly (no subprocess overhead)
+- Most flexible but adds Python dependency complexity
+
+### Implementation plan for Option A:
+1. Start whisper-server as long-running sidecar process
+2. VAD sends audio chunks via HTTP POST as they accumulate
+3. Server returns partial transcriptions
+4. type_chunk() outputs text character by character
+5. Final transcription replaces partial output
+6. Benefit: model stays warm in VRAM, ~100-200ms latency per chunk
 
 ## Cross-platform distribution plan
 1. Linux: compile per GPU vendor (CUDA .deb, Vulkan .deb, CPU .deb)
