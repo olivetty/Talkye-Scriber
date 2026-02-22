@@ -395,11 +395,50 @@ class ChatRequest(BaseModel):
     system_prompt: str | None = None
     enable_thinking: bool = False
     stream: bool = True
+    model: str = "local"  # "local" or a Groq model ID
+
+
+@app.get("/chat/models")
+def chat_models():
+    """List available chat models."""
+    from llm_groq import GROQ_MODELS, groq_available
+    from llm_local import local_llm
+
+    models = []
+    # Local model (free, offline)
+    models.append({
+        "id": "local",
+        "label": "Qwen3 1.7B",
+        "description": "Local · Free · Offline",
+        "available": local_llm.available,
+        "loaded": local_llm.loaded,
+        "supports_thinking": True,
+        "cloud": False,
+    })
+    # Groq cloud models
+    has_key = groq_available()
+    for model_id, info in GROQ_MODELS.items():
+        models.append({
+            "id": model_id,
+            "label": info["label"],
+            "description": info["description"],
+            "available": has_key,
+            "loaded": True,  # cloud models are always "loaded"
+            "supports_thinking": info["supports_thinking"],
+            "cloud": True,
+        })
+    return {"models": models, "groq_available": has_key}
 
 
 @app.post("/chat")
 async def chat_endpoint(req: ChatRequest):
-    """Chat with local LLM. Supports streaming via SSE."""
+    """Chat with local or cloud LLM. Supports streaming via SSE."""
+
+    # Route to Groq cloud if not local
+    if req.model != "local":
+        return await _chat_groq(req)
+
+    # Local LLM
     from llm_local import local_llm
 
     if not local_llm.loaded:
@@ -433,6 +472,35 @@ async def chat_endpoint(req: ChatRequest):
             return {"response": response}
         except Exception as e:
             return {"error": str(e)}
+
+
+async def _chat_groq(req: ChatRequest):
+    """Handle chat via Groq cloud API."""
+    from llm_groq import groq_chat_stream, groq_available
+
+    if not groq_available():
+        return {"error": "GROQ_API_KEY not set. Add it to .env file."}
+
+    if req.stream:
+        def generate():
+            try:
+                for token in groq_chat_stream(
+                    user_message=req.message,
+                    model=req.model,
+                    system_prompt=req.system_prompt,
+                    history=req.history,
+                    enable_thinking=req.enable_thinking,
+                ):
+                    yield f"data: {json.dumps({'token': token})}\n\n"
+                yield "data: [DONE]\n\n"
+            except Exception as e:
+                logger.exception("Groq chat error: %s", e)
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+        return StreamingResponse(generate(), media_type="text/event-stream")
+    else:
+        # Non-streaming not implemented for Groq (not needed)
+        return {"error": "Streaming required for cloud models"}
 
 
 # ── Voice Chat ──
