@@ -244,12 +244,9 @@ class VoiceChat:
         # 3. LLM — generate response (local or Groq cloud)
         try:
             system = (
-                "You are a voice assistant. RESPOND ONLY IN ENGLISH. "
-                "The user may speak any language — understand them, but your reply "
-                "MUST be in English. Never use Romanian, French, or any other language. "
+                "You are a voice assistant. Reply in the same language the user speaks. "
                 "Keep it short: 1-3 sentences. No markdown. Plain text only."
             )
-            wrapped_text = f"[Reply in English only] {text}"
             hist = [m for m in self._history[-10:] if m is not self._history[-1]]
 
             response_text = ""
@@ -263,7 +260,7 @@ class VoiceChat:
                     return
 
                 for token in local_llm.chat_stream(
-                    user_message=wrapped_text,
+                    user_message=text,
                     system_prompt=system,
                     history=hist,
                     max_tokens=256,
@@ -288,7 +285,7 @@ class VoiceChat:
                 # Groq cloud model
                 from llm_groq import groq_chat_stream
                 for token in groq_chat_stream(
-                    user_message=wrapped_text,
+                    user_message=text,
                     model=self._model,
                     system_prompt=system,
                     history=hist,

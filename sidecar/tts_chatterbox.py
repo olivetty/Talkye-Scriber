@@ -428,8 +428,6 @@ class ChatterboxTTS:
         Returns True on success.
         """
         import base64
-        import struct
-        import numpy as np
 
         if not self.worker_running:
             if not self.load():
@@ -452,6 +450,7 @@ class ChatterboxTTS:
         }
 
         url = f"{_WORKER_URL}/generate-stream"
+        aplay_proc = None
         try:
             body = json.dumps(payload).encode()
             req = urllib.request.Request(
@@ -472,7 +471,6 @@ class ChatterboxTTS:
 
             chunks_played = 0
             with urllib.request.urlopen(req, timeout=300) as resp:
-                buf = b""
                 for raw_line in resp:
                     line = raw_line.decode("utf-8", errors="replace").rstrip("\n\r")
                     if not line.startswith("data: "):
@@ -515,10 +513,11 @@ class ChatterboxTTS:
 
         except Exception as e:
             logger.error("Chatterbox stream failed: %s", e)
-            try:
-                aplay_proc.kill()
-            except Exception:
-                pass
+            if aplay_proc is not None:
+                try:
+                    aplay_proc.kill()
+                except Exception:
+                    pass
             return False
 
 
