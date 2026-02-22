@@ -30,22 +30,30 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Chatterbox Worker", version="0.1.0")
 
-# Allowed voice directory — only serve files from here
-_VOICES_DIR = os.path.expanduser("~/.config/talkye/voices")
+# Allowed voice directories — serve files from these locations
+_VOICES_DIRS = [
+    os.path.expanduser("~/.config/talkye/voices"),
+]
+
+# Auto-discover project voices dir (sibling of sidecar/)
+_sidecar_dir = os.path.dirname(os.path.abspath(__file__))
+_project_voices = os.path.join(os.path.dirname(_sidecar_dir), "voices")
+if os.path.isdir(_project_voices):
+    _VOICES_DIRS.append(_project_voices)
 
 
 def _validate_voice_path(path: str | None) -> str | None:
-    """Validate that voice_ref points to a file inside the voices directory."""
+    """Validate that voice_ref points to a file inside an allowed voices directory."""
     if not path:
         return None
     real = os.path.realpath(path)
-    allowed = os.path.realpath(_VOICES_DIR)
-    if not real.startswith(allowed + os.sep) and real != allowed:
-        logger.warning("Rejected voice path outside voices dir: %s", path)
-        return None
-    if not os.path.isfile(real):
-        return None
-    return real
+    for allowed_dir in _VOICES_DIRS:
+        allowed = os.path.realpath(allowed_dir)
+        if real.startswith(allowed + os.sep) or real == allowed:
+            if os.path.isfile(real):
+                return real
+    logger.warning("Rejected voice path outside allowed dirs: %s (allowed: %s)", path, _VOICES_DIRS)
+    return None
 
 # ── Model state ──
 _model = None
