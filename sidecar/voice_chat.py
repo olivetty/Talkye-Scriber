@@ -248,23 +248,23 @@ class VoiceChat:
                 return
 
             system = (
-                "You are a voice assistant. You MUST ALWAYS respond in English, "
-                "no matter what language the user speaks. Your voice engine only supports English. "
-                "If the user speaks Romanian, French, Spanish, or any other language, "
-                "understand them but ALWAYS reply in English. "
-                "Keep responses short (1-3 sentences). No markdown, no bullet points, "
-                "no special characters, no emojis. Plain spoken English only.\n/no_think"
+                "You are a voice assistant. RESPOND ONLY IN ENGLISH. "
+                "The user may speak any language — understand them, but your reply "
+                "MUST be in English. Never use Romanian, French, or any other language. "
+                "Keep it short: 1-3 sentences. No markdown. Plain text only.\n/no_think"
             )
 
-            # Build messages with history (last 10)
-            messages = [{"role": "system", "content": system}]
-            messages.extend(self._history[-10:])
+            # Wrap user text with explicit English instruction
+            wrapped_text = f"[Reply in English only] {text}"
+
+            # History excluding current message (chat_stream adds user_message)
+            hist = [m for m in self._history[-10:] if m is not self._history[-1]]
 
             response_text = ""
             for token in local_llm.chat_stream(
-                user_message=text,
+                user_message=wrapped_text,
                 system_prompt=system,
-                history=self._history[-10:][:-1],  # exclude current (already in user_message)
+                history=hist,
                 max_tokens=256,
                 temperature=0.7,
                 enable_thinking=False,
