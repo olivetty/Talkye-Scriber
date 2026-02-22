@@ -30,6 +30,12 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _downloading = false;
   String _streamBuffer = '';
 
+  // Voice chat state
+  bool _voiceMode = false;
+  String _voiceState = 'stopped'; // stopped, listening, processing, speaking
+  WebSocket? _voiceWs;
+  bool _ttsAvailable = false;
+
   @override
   void initState() {
     super.initState();
@@ -38,6 +44,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    _stopVoiceChat();
     _controller.dispose();
     _scrollController.dispose();
     _focusNode.dispose();
@@ -59,17 +66,22 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _checkLlmStatus() async {
     final status = await _get('/llm/status');
-    if (mounted && status != null) {
+    final vcStatus = await _get('/voice-chat/status');
+    if (mounted) {
       setState(() {
-        _llmAvailable = status['available'] as bool? ?? false;
-        _llmLoaded = status['loaded'] as bool? ?? false;
+        if (status != null) {
+          _llmAvailable = status['available'] as bool? ?? false;
+          _llmLoaded = status['loaded'] as bool? ?? false;
+        }
+        if (vcStatus != null) {
+          _ttsAvailable = vcStatus['tts_available'] as bool? ?? false;
+        }
       });
     }
   }
 
   Future<void> _maybeAutoDownload() async {
     if (_llmAvailable || _llmLoaded || _downloading) return;
-    // Small delay so the screen renders first
     await Future.delayed(const Duration(milliseconds: 500));
     if (!mounted || _llmAvailable || _llmLoaded) return;
 
@@ -92,9 +104,7 @@ class _ChatScreenState extends State<ChatScreen> {
         ],
       ),
     );
-    if (confirm == true && mounted) {
-      _downloadModel();
-    }
+    if (confirm == true && mounted) _downloadModel();
   }
 
   Future<void> _downloadModel() async {
@@ -109,17 +119,134 @@ class _ChatScreenState extends State<ChatScreen> {
       c.close();
       final result = jsonDecode(data) as Map<String, dynamic>;
       if (result['ok'] == true) {
-        // Poll until model is loaded (auto-load happens in sidecar)
         for (var i = 0; i < 30; i++) {
           await Future.delayed(const Duration(seconds: 2));
           await _checkLlmStatus();
           if (_llmLoaded) break;
         }
       }
-    } catch (e) {
-      // ignore
+    } catch (_) {
     } finally {
       if (mounted) setState(() => _downloading = false);
+    }
+  }
+
+  // ── Voice Chat ──
+
+  Future<void> _toggleVoiceMode() async {
+    if (_voiceMode) {
+      _stopVoiceChat();
+    } else {
+      await _startVoiceChat();
+    }
+  }
+
+  Future<void> _startVoiceChat() async {
+    try {
+      _voiceWs = await WebSocket.connect('ws://127.0.0.1:8179/voice-chat')
+          .timeout(const Duration(seconds: 3));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Voice chat connection failed: $e'),
+            backgroundColor: C.error));
+      }
+      return;
+    }
+
+    setState(() {
+      _voiceMode = true;
+      _voiceState = 'connecting';
+    });
+
+    // Send start command
+    _voiceWs!.add(jsonEncode({'action': 'start'}));
+
+    // Listen for events
+    _voiceWs!.listen(
+      (data) {
+        if (!mounted) return;
+        try {
+          final event = jsonDecode(data as String) as Map<String, dynamic>;
+          _handleVoiceEvent(event);
+        } catch (_) {}
+      },
+      onDone: () {
+        if (mounted) {
+          setState(() {
+            _voiceMode = false;
+            _voiceState = 'stopped';
+          });
+        }
+      },
+      onError: (_) {
+        if (mounted) {
+          setState(() {
+            _voiceMode = false;
+            _voiceState = 'stopped';
+          });
+        }
+      },
+    );
+  }
+
+  void _handleVoiceEvent(Map<String, dynamic> event) {
+    final type = event['type'] as String? ?? '';
+
+    switch (type) {
+      case 'state':
+        setState(() => _voiceState = event['state'] as String? ?? 'stopped');
+        if (_voiceState == 'stopped') {
+          setState(() => _voiceMode = false);
+        }
+        break;
+
+      case 'user_text':
+        final text = event['text'] as String? ?? '';
+        setState(() {
+          _messages.add(ChatMessage(role: 'user', content: text));
+        });
+        _scrollToBottom();
+        break;
+
+      case 'assistant_text':
+        final text = event['text'] as String? ?? '';
+        final done = event['done'] as bool? ?? false;
+        setState(() {
+          // Update or add assistant message
+          if (_messages.isNotEmpty && _messages.last.role == 'assistant' && !done) {
+            _messages.last = ChatMessage(role: 'assistant', content: text);
+          } else if (_messages.isEmpty || _messages.last.role != 'assistant') {
+            _messages.add(ChatMessage(role: 'assistant', content: text));
+          } else {
+            _messages.last = ChatMessage(role: 'assistant', content: text);
+          }
+        });
+        _scrollToBottom();
+        break;
+
+      case 'error':
+        final msg = event['message'] as String? ?? 'Unknown error';
+        setState(() {
+          _messages.add(ChatMessage(role: 'assistant', content: 'Error: $msg'));
+        });
+        break;
+    }
+  }
+
+  void _stopVoiceChat() {
+    if (_voiceWs != null) {
+      try {
+        _voiceWs!.add(jsonEncode({'action': 'stop'}));
+        _voiceWs!.close();
+      } catch (_) {}
+      _voiceWs = null;
+    }
+    if (mounted) {
+      setState(() {
+        _voiceMode = false;
+        _voiceState = 'stopped';
+      });
     }
   }
 
@@ -137,7 +264,6 @@ class _ChatScreenState extends State<ChatScreen> {
     });
     _scrollToBottom();
 
-    // Build history (last 10 messages for context)
     final history = _messages
         .where((m) => m != _messages.last)
         .toList()
@@ -159,7 +285,6 @@ class _ChatScreenState extends State<ChatScreen> {
       })));
       final resp = await req.close().timeout(const Duration(minutes: 2));
 
-      // Add placeholder for assistant response
       setState(() {
         _messages.add(ChatMessage(role: 'assistant', content: ''));
       });
@@ -190,10 +315,7 @@ class _ChatScreenState extends State<ChatScreen> {
     } catch (e) {
       if (mounted) {
         setState(() {
-          _messages.add(ChatMessage(
-            role: 'assistant',
-            content: 'Error: $e',
-          ));
+          _messages.add(ChatMessage(role: 'assistant', content: 'Error: $e'));
         });
       }
     } finally {
@@ -217,6 +339,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _clearChat() {
+    _stopVoiceChat();
     setState(() {
       _messages.clear();
       _streamBuffer = '';
@@ -232,9 +355,9 @@ class _ChatScreenState extends State<ChatScreen> {
       Expanded(
         child: !_llmAvailable && !_llmLoaded
             ? _downloadView()
-            : _chatView(),
+            : _voiceMode ? _voiceChatView() : _chatView(),
       ),
-      if (_llmAvailable || _llmLoaded) _inputBar(),
+      if ((_llmAvailable || _llmLoaded) && !_voiceMode) _inputBar(),
     ]);
   }
 
@@ -262,7 +385,32 @@ class _ChatScreenState extends State<ChatScreen> {
           ]),
         ),
         const Spacer(),
-        if (_messages.isNotEmpty)
+        // Voice mode toggle
+        if (_llmLoaded && _ttsAvailable)
+          GestureDetector(
+            onTap: _toggleVoiceMode,
+            child: MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: _voiceMode ? C.accent.withAlpha(20) : C.level2,
+                  borderRadius: BorderRadius.circular(6),
+                  border: _voiceMode ? Border.all(color: C.accent.withAlpha(60)) : null,
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(_voiceMode ? Icons.mic_rounded : Icons.mic_none_rounded,
+                    size: 14, color: _voiceMode ? C.accent : C.textMuted),
+                  const SizedBox(width: 4),
+                  Text(_voiceMode ? 'Voice On' : 'Voice',
+                    style: TextStyle(fontSize: 11,
+                      color: _voiceMode ? C.accent : C.textMuted)),
+                ]),
+              ),
+            ),
+          ),
+        if (_messages.isNotEmpty) ...[
+          const SizedBox(width: 8),
           GestureDetector(
             onTap: _clearChat,
             child: MouseRegion(
@@ -278,6 +426,7 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ),
           ),
+        ],
       ]),
     );
   }
@@ -315,6 +464,133 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       ),
     ]));
+  }
+
+  // ── Voice chat view ──
+
+  Widget _voiceChatView() {
+    return Column(children: [
+      // Messages list
+      Expanded(
+        child: _messages.isEmpty
+          ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+              _voiceOrb(),
+              const SizedBox(height: 20),
+              Text(_voiceStateLabel(),
+                style: const TextStyle(fontSize: 14, color: C.textSub)),
+              const SizedBox(height: 4),
+              const Text('Speak naturally — no button needed',
+                style: TextStyle(fontSize: 11, color: C.textMuted)),
+            ]))
+          : Column(children: [
+              // Compact orb at top
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  _voiceOrbSmall(),
+                  const SizedBox(width: 10),
+                  Text(_voiceStateLabel(),
+                    style: const TextStyle(fontSize: 12, color: C.textSub)),
+                ]),
+              ),
+              // Messages
+              Expanded(
+                child: ListView.builder(
+                  controller: _scrollController,
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
+                  itemCount: _messages.length,
+                  itemBuilder: (_, i) => _messageBubble(_messages[i]),
+                ),
+              ),
+            ]),
+      ),
+      // Stop button
+      Padding(
+        padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
+        child: GestureDetector(
+          onTap: _stopVoiceChat,
+          child: MouseRegion(
+            cursor: SystemMouseCursors.click,
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(
+                color: C.error.withAlpha(15),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: C.error.withAlpha(40)),
+              ),
+              child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                Icon(Icons.stop_rounded, size: 18, color: C.error),
+                SizedBox(width: 6),
+                Text('Stop Voice Chat',
+                  style: TextStyle(fontSize: 13, color: C.error, fontWeight: FontWeight.w500)),
+              ]),
+            ),
+          ),
+        ),
+      ),
+    ]);
+  }
+
+  String _voiceStateLabel() {
+    switch (_voiceState) {
+      case 'listening': return 'Listening...';
+      case 'processing': return 'Thinking...';
+      case 'speaking': return 'Speaking...';
+      case 'connecting': return 'Connecting...';
+      default: return 'Ready';
+    }
+  }
+
+  Color _voiceOrbColor() {
+    switch (_voiceState) {
+      case 'listening': return C.accent;
+      case 'processing': return C.warning;
+      case 'speaking': return C.success;
+      default: return C.textMuted;
+    }
+  }
+
+  Widget _voiceOrb() {
+    final color = _voiceOrbColor();
+    final isActive = _voiceState == 'listening' || _voiceState == 'speaking';
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 400),
+      width: isActive ? 100 : 80,
+      height: isActive ? 100 : 80,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: color.withAlpha(isActive ? 30 : 15),
+        border: Border.all(color: color.withAlpha(isActive ? 120 : 50), width: 2),
+        boxShadow: isActive ? [
+          BoxShadow(color: color.withAlpha(30), blurRadius: 24, spreadRadius: 4),
+        ] : [],
+      ),
+      child: Icon(
+        _voiceState == 'speaking' ? Icons.volume_up_rounded :
+        _voiceState == 'processing' ? Icons.psychology_rounded :
+        Icons.mic_rounded,
+        size: 36, color: color,
+      ),
+    );
+  }
+
+  Widget _voiceOrbSmall() {
+    final color = _voiceOrbColor();
+    return Container(
+      width: 28, height: 28,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: color.withAlpha(20),
+        border: Border.all(color: color.withAlpha(80)),
+      ),
+      child: Icon(
+        _voiceState == 'speaking' ? Icons.volume_up_rounded :
+        _voiceState == 'processing' ? Icons.psychology_rounded :
+        Icons.mic_rounded,
+        size: 14, color: color,
+      ),
+    );
   }
 
   Widget _chatView() {

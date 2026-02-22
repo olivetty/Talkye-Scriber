@@ -390,6 +390,86 @@ async def chat_endpoint(req: ChatRequest):
             return {"error": str(e)}
 
 
+# ── Voice Chat ──
+
+_voice_chat = None  # VoiceChat instance (singleton)
+
+
+@app.get("/voice-chat/status")
+def voice_chat_status():
+    """Voice chat status."""
+    from tts import is_available as tts_ok
+    return {
+        "running": _voice_chat is not None and _voice_chat.running,
+        "tts_available": tts_ok(),
+    }
+
+
+@app.websocket("/voice-chat")
+async def voice_chat_ws(ws: WebSocket):
+    """WebSocket for voice chat — full duplex voice conversation.
+
+    Client sends: {"action": "start"} or {"action": "stop"}
+    Server sends: {"type": "state", "state": "listening|processing|speaking|stopped"}
+                  {"type": "user_text", "text": "..."}
+                  {"type": "assistant_text", "text": "...", "done": bool}
+                  {"type": "error", "message": "..."}
+    """
+    global _voice_chat
+    await ws.accept()
+    logger.info("Voice chat WebSocket connected")
+
+    event_queue = asyncio.Queue()
+
+    def _on_event(event: dict):
+        """Thread-safe callback — push event to async queue."""
+        try:
+            event_queue.put_nowait(event)
+        except Exception:
+            pass
+
+    async def _sender():
+        """Forward events from queue to WebSocket."""
+        try:
+            while True:
+                event = await event_queue.get()
+                await ws.send_json(event)
+        except Exception:
+            pass
+
+    sender_task = asyncio.create_task(_sender())
+
+    try:
+        while True:
+            data = await ws.receive_json()
+            action = data.get("action", "")
+
+            if action == "start":
+                if _voice_chat and _voice_chat.running:
+                    _voice_chat.stop()
+                from voice_chat import VoiceChat
+                _voice_chat = VoiceChat(on_event=_on_event)
+                _voice_chat.start()
+                logger.info("Voice chat started via WebSocket")
+
+            elif action == "stop":
+                if _voice_chat and _voice_chat.running:
+                    _voice_chat.stop()
+                    _voice_chat = None
+                    logger.info("Voice chat stopped via WebSocket")
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.warning("Voice chat WS error: %s", e)
+    finally:
+        sender_task.cancel()
+        if _voice_chat and _voice_chat.running:
+            _voice_chat.stop()
+            _voice_chat = None
+        logger.info("Voice chat WebSocket disconnected")
+
+
 # ── WebSocket events ──
 
 @app.websocket("/events")
