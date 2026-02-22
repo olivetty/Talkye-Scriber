@@ -32,6 +32,9 @@ _SETTINGS_PATH = os.path.join(
 def detect_gpu() -> dict:
     """Detect available GPU acceleration.
 
+    Works even without PyTorch installed — uses system tools first,
+    then refines with torch if available.
+
     Returns dict with:
         backend: "cuda" | "rocm" | "mps" | "cpu"
         device: torch device string
@@ -40,42 +43,80 @@ def detect_gpu() -> dict:
     """
     info = {"backend": "cpu", "device": "cpu", "name": "CPU only", "vram_gb": 0}
 
+    # ── System-level detection (no torch needed) ──
+
+    # NVIDIA: use nvidia-smi
     try:
-        import torch
-    except ImportError:
-        return info
+        import subprocess
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,memory.total",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            parts = result.stdout.strip().split(",")
+            info["backend"] = "cuda"
+            info["device"] = "cuda"
+            info["name"] = parts[0].strip() if parts else "NVIDIA GPU"
+            if len(parts) > 1:
+                try:
+                    info["vram_gb"] = round(int(parts[1].strip()) / 1024, 1)
+                except ValueError:
+                    pass
+            return info
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
 
-    # NVIDIA CUDA
-    if torch.cuda.is_available():
-        info["backend"] = "cuda"
-        info["device"] = "cuda"
+    # AMD ROCm (Linux)
+    if os.path.exists("/opt/rocm"):
         try:
-            info["name"] = torch.cuda.get_device_name(0)
-            vram = torch.cuda.get_device_properties(0).total_mem
-            info["vram_gb"] = round(vram / 1024**3, 1)
-        except Exception:
-            info["name"] = "NVIDIA GPU"
-        return info
-
-    # AMD ROCm (Linux only, shows as cuda in PyTorch ROCm builds)
-    # ROCm builds report torch.cuda.is_available() = True, so caught above.
-    # If hip is available but cuda isn't, it's a partial ROCm setup.
-    if hasattr(torch, "hip") or os.path.exists("/opt/rocm"):
-        try:
-            if torch.cuda.is_available():
+            import subprocess
+            result = subprocess.run(
+                ["rocm-smi", "--showproductname"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0:
                 info["backend"] = "rocm"
                 info["device"] = "cuda"  # ROCm uses cuda device in PyTorch
                 info["name"] = "AMD GPU (ROCm)"
                 return info
-        except Exception:
-            pass
+        except (FileNotFoundError, Exception):
+            # ROCm dir exists but tools not found — still likely AMD GPU
+            info["backend"] = "rocm"
+            info["device"] = "cuda"
+            info["name"] = "AMD GPU (ROCm)"
+            return info
 
-    # Apple MPS
-    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    # Apple Silicon (macOS)
+    import platform
+    if platform.system() == "Darwin" and platform.machine() == "arm64":
         info["backend"] = "mps"
         info["device"] = "mps"
         info["name"] = "Apple Silicon (MPS)"
         return info
+
+    # ── Refine with torch if available ──
+    try:
+        import torch
+        if torch.cuda.is_available():
+            info["backend"] = "cuda"
+            info["device"] = "cuda"
+            try:
+                info["name"] = torch.cuda.get_device_name(0)
+                vram = torch.cuda.get_device_properties(0).total_mem
+                info["vram_gb"] = round(vram / 1024**3, 1)
+            except Exception:
+                info["name"] = "NVIDIA GPU"
+            return info
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            info["backend"] = "mps"
+            info["device"] = "mps"
+            info["name"] = "Apple Silicon (MPS)"
+            return info
+    except ImportError:
+        pass
 
     return info
 
@@ -140,8 +181,13 @@ class ChatterboxTTS:
 
     @property
     def available(self) -> bool:
-        """True if Chatterbox can be used (installed + GPU)."""
+        """True if Chatterbox can be used right now (installed + GPU)."""
         return self.installed and self.has_gpu
+
+    @property
+    def can_install(self) -> bool:
+        """True if GPU exists — user can install and use Chatterbox."""
+        return self.has_gpu
 
     @property
     def loaded(self) -> bool:
@@ -331,6 +377,7 @@ class ChatterboxTTS:
             "loaded": self.loaded,
             "gpu": self.gpu_info,
             "available": self.available,
+            "can_install": self.can_install,
         }
 
 

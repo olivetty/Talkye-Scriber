@@ -22,6 +22,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _chatterboxInstalled = false;
   bool _chatterboxAvailable = false;
   bool _chatterboxLoaded = false;
+  bool _chatterboxCanInstall = false;
   String _gpuName = '';
   String _gpuBackend = 'cpu';
   bool _installingChatterbox = false;
@@ -53,6 +54,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _chatterboxInstalled = cbx['installed'] as bool? ?? false;
         _chatterboxAvailable = cbx['available'] as bool? ?? false;
         _chatterboxLoaded = cbx['loaded'] as bool? ?? false;
+        _chatterboxCanInstall = cbx['can_install'] as bool? ?? false;
         _gpuName = gpu['name'] as String? ?? 'Unknown';
         _gpuBackend = gpu['backend'] as String? ?? 'cpu';
       });
@@ -181,7 +183,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _ttsChatterboxOption() {
     final selected = widget.settings.ttsBackend == 'chatterbox';
     final hasGpu = _gpuBackend != 'cpu';
-    final canSelect = _chatterboxAvailable;
+    // Allow selection if GPU exists (even if not installed yet — install button shown)
+    final canSelect = hasGpu;
 
     // Determine status text
     String statusText;
