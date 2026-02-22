@@ -27,6 +27,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _gpuBackend = 'cpu';
   bool _installingChatterbox = false;
   bool _loadingChatterbox = false;
+  bool _testingTts = false;
 
   @override
   void initState() {
@@ -110,6 +111,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await _fetchTtsStatus();
     } catch (_) {}
     if (mounted) setState(() => _loadingChatterbox = false);
+  }
+
+  Future<void> _testTts(String text, String langId) async {
+    setState(() => _testingTts = true);
+    try {
+      final c = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+      final req = await c.postUrl(Uri.parse('$_baseUrl/tts/test'));
+      req.headers.set('Content-Type', 'application/json');
+      req.write(jsonEncode({'text': text, 'language_id': langId}));
+      await req.close().timeout(const Duration(seconds: 10));
+      c.close();
+    } catch (_) {}
+    // Wait a bit for audio to play before re-enabling button
+    await Future.delayed(const Duration(seconds: 3));
+    if (mounted) setState(() => _testingTts = false);
   }
 
   @override
@@ -329,6 +345,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
             ],
+            // Test buttons when loaded
+            if (_chatterboxLoaded && selected) ...[
+              const SizedBox(height: 10),
+              Wrap(spacing: 6, runSpacing: 6, children: [
+                _testBtn('🇬🇧 English', 'Hello, this is a test of the Chatterbox voice.', 'en'),
+                _testBtn('🇫🇷 French', 'Bonjour, ceci est un test de la voix.', 'fr'),
+                _testBtn('🇩🇪 German', 'Hallo, dies ist ein Test der Stimme.', 'de'),
+                _testBtn('🇪🇸 Spanish', 'Hola, esta es una prueba de la voz.', 'es'),
+                _testBtn('🇯🇵 Japanese', 'こんにちは、これは音声のテストです。', 'ja'),
+              ]),
+            ],
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _testBtn(String label, String text, String langId) {
+    return GestureDetector(
+      onTap: _testingTts ? null : () => _testTts(text, langId),
+      child: MouseRegion(
+        cursor: _testingTts ? SystemMouseCursors.basic : SystemMouseCursors.click,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: _testingTts ? C.level2 : C.level2,
+            borderRadius: BorderRadius.circular(5),
+            border: Border.all(color: C.accent.withAlpha(40)),
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            if (_testingTts)
+              const SizedBox(width: 10, height: 10,
+                child: CircularProgressIndicator(strokeWidth: 1, color: C.textMuted))
+            else
+              const Icon(Icons.volume_up_rounded, size: 10, color: C.accent),
+            const SizedBox(width: 4),
+            Text(label, style: const TextStyle(fontSize: 10, color: C.textSub)),
           ]),
         ),
       ),

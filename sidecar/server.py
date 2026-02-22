@@ -555,6 +555,26 @@ def load_chatterbox():
         return {"ok": False, "error": str(e)}
 
 
+class TtsTestRequest(BaseModel):
+    text: str = "Hello, this is a test of the text to speech system."
+    language_id: str = "en"
+
+
+@app.post("/tts/test")
+def tts_test(req: TtsTestRequest):
+    """Test TTS — generate and play a short phrase."""
+    from tts import speak, get_backend_from_settings
+    import threading
+
+    backend = get_backend_from_settings()
+
+    def _play():
+        speak(req.text, language_id=req.language_id)
+
+    threading.Thread(target=_play, daemon=True, name="tts-test").start()
+    return {"ok": True, "backend": backend, "text": req.text, "language_id": req.language_id}
+
+
 @app.websocket("/voice-chat")
 async def voice_chat_ws(ws: WebSocket):
     """WebSocket for voice chat — full duplex voice conversation.
