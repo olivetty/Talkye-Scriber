@@ -143,6 +143,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (mounted) setState(() => _testingTts = false);
   }
 
+  Future<void> _requestUnloadChatterbox() async {
+    try {
+      final c = HttpClient()..connectionTimeout = const Duration(seconds: 3);
+      final req = await c.postUrl(Uri.parse('$_baseUrl/tts/unload-chatterbox'));
+      req.headers.set('Content-Type', 'application/json');
+      req.write('{}');
+      await req.close().timeout(const Duration(seconds: 10));
+      c.close();
+      LogBuffer.add('Chatterbox unloaded (switched to Pocket)');
+      if (mounted) {
+        setState(() {
+          _chatterboxLoaded = false;
+          _chatterboxWarmedUp = false;
+        });
+      }
+    } catch (e) {
+      LogBuffer.add('Chatterbox unload failed: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     // Show loading overlay while Chatterbox auto-loads at startup
@@ -267,9 +287,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final selected = widget.settings.ttsBackend == value;
     return GestureDetector(
       onTap: () {
+        final oldBackend = widget.settings.ttsBackend;
         widget.settings.ttsBackend = value;
         widget.onChanged(widget.settings);
         setState(() {});
+        // Unload Chatterbox when switching away
+        if (oldBackend == 'chatterbox' && value != 'chatterbox') {
+          _requestUnloadChatterbox();
+        }
       },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
