@@ -35,18 +35,24 @@ class _StatusBarState extends State<StatusBar> {
   }
 
   Future<void> _refresh() async {
-    // App process tree
+    // App process tree (Flutter)
     final app = await _sampleTree(pid);
-    // Sidecar process tree
+    // Sidecar process tree (port 8179)
     final sidecarPid = await _findPid('uvicorn.*server:app.*8179');
     final sidecar = sidecarPid != null ? await _sampleTree(sidecarPid) : null;
-    // GPU
-    final gpu = await _readGpu();
+    // Chatterbox worker process tree (port 8180)
+    final cbxPid = await _findPid('chatterbox_worker.*8180');
+    final cbx = cbxPid != null ? await _sampleTree(cbxPid) : null;
+    // GPU — only our processes
+    final ourPids = <int>[pid];
+    if (sidecarPid != null) ourPids.add(sidecarPid);
+    if (cbxPid != null) ourPids.add(cbxPid);
+    final gpu = await _readGpuForPids(ourPids);
 
     if (!mounted) return;
     setState(() {
-      _ramMB = ((app?.rssBytes ?? 0) + (sidecar?.rssBytes ?? 0)) ~/ (1024 * 1024);
-      _cpuPct = (app?.cpuPct ?? 0) + (sidecar?.cpuPct ?? 0);
+      _ramMB = ((app?.rssBytes ?? 0) + (sidecar?.rssBytes ?? 0) + (cbx?.rssBytes ?? 0)) ~/ (1024 * 1024);
+      _cpuPct = (app?.cpuPct ?? 0) + (sidecar?.cpuPct ?? 0) + (cbx?.cpuPct ?? 0);
       _gpuMB = gpu.$1;
       _gpuTotalMB = gpu.$2;
     });
@@ -100,18 +106,52 @@ class _StatusBarState extends State<StatusBar> {
     return _ProcStats(rssBytes: totalRss, cpuPct: cpu);
   }
 
-  static Future<(int used, int total)> _readGpu() async {
+  static Future<(int used, int total)> _readGpuForPids(List<int> pids) async {
     try {
-      final r = await Process.run('nvidia-smi', [
-        '--query-gpu=memory.used,memory.total',
+      // Get total VRAM
+      final rTotal = await Process.run('nvidia-smi', [
+        '--query-gpu=memory.total',
         '--format=csv,noheader,nounits',
       ]);
-      if (r.exitCode == 0) {
-        final parts = (r.stdout as String).trim().split(',');
-        if (parts.length >= 2) {
-          return (int.parse(parts[0].trim()), int.parse(parts[1].trim()));
+      int total = 0;
+      if (rTotal.exitCode == 0) {
+        total = int.tryParse((rTotal.stdout as String).trim().split('\n').first.trim()) ?? 0;
+      }
+
+      // Get per-process VRAM usage — sum only our PIDs + their children
+      final allPids = <int>{};
+      for (final p in pids) {
+        allPids.add(p);
+        try {
+          final r = await Process.run('pgrep', ['-P', '$p']);
+          if (r.exitCode == 0) {
+            for (final l in (r.stdout as String).trim().split('\n')) {
+              final cp = int.tryParse(l.trim());
+              if (cp != null) allPids.add(cp);
+            }
+          }
+        } catch (_) {}
+      }
+
+      final rProc = await Process.run('nvidia-smi', [
+        '--query-compute-apps=pid,used_gpu_memory',
+        '--format=csv,noheader,nounits',
+      ]);
+      int used = 0;
+      if (rProc.exitCode == 0) {
+        for (final line in (rProc.stdout as String).trim().split('\n')) {
+          final parts = line.split(',');
+          if (parts.length >= 2) {
+            final p = int.tryParse(parts[0].trim());
+            final mem = int.tryParse(parts[1].trim());
+            if (p != null && mem != null && allPids.contains(p)) {
+              used += mem;
+            }
+          }
         }
       }
+
+      return (used, total);
     } catch (_) {}
     return (0, 0);
   }
