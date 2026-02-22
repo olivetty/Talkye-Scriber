@@ -114,6 +114,10 @@ class FfiEngineConfig {
   final String parakeetModelDir;
   final String vadModelPath;
   final String audioOutput;
+  final double cbxExaggeration;
+  final double cbxCfgWeight;
+  final double cbxTemperature;
+  final int cbxContextWindow;
 
   const FfiEngineConfig({
     required this.sttBackend,
@@ -129,6 +133,10 @@ class FfiEngineConfig {
     required this.parakeetModelDir,
     required this.vadModelPath,
     required this.audioOutput,
+    required this.cbxExaggeration,
+    required this.cbxCfgWeight,
+    required this.cbxTemperature,
+    required this.cbxContextWindow,
   });
 
   @override
@@ -145,7 +153,11 @@ class FfiEngineConfig {
       hfToken.hashCode ^
       parakeetModelDir.hashCode ^
       vadModelPath.hashCode ^
-      audioOutput.hashCode;
+      audioOutput.hashCode ^
+      cbxExaggeration.hashCode ^
+      cbxCfgWeight.hashCode ^
+      cbxTemperature.hashCode ^
+      cbxContextWindow.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -164,7 +176,11 @@ class FfiEngineConfig {
           hfToken == other.hfToken &&
           parakeetModelDir == other.parakeetModelDir &&
           vadModelPath == other.vadModelPath &&
-          audioOutput == other.audioOutput;
+          audioOutput == other.audioOutput &&
+          cbxExaggeration == other.cbxExaggeration &&
+          cbxCfgWeight == other.cbxCfgWeight &&
+          cbxTemperature == other.cbxTemperature &&
+          cbxContextWindow == other.cbxContextWindow;
 }
 
 @freezed

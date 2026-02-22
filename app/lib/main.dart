@@ -57,6 +57,11 @@ class AppSettings {
   String wakePhrase; // wake phrase for VAD (user-trained)
   int vadTimeout; // seconds of silence → standby
   bool autoEnter; // press Enter when VAD session ends
+  // Chatterbox quality parameters
+  double cbxExaggeration; // 0.0-1.0, voice expressiveness
+  double cbxCfgWeight; // 0.0-1.0, reference voice adherence
+  double cbxTemperature; // 0.1-1.0, generation variability
+  int cbxContextWindow; // 25-100, overlap between streaming chunks
 
   AppSettings({
     this.sttBackend = 'parakeet',
@@ -72,6 +77,10 @@ class AppSettings {
     this.wakePhrase = 'hey mira',
     this.vadTimeout = 8,
     this.autoEnter = true,
+    this.cbxExaggeration = 0.5,
+    this.cbxCfgWeight = 0.5,
+    this.cbxTemperature = 0.8,
+    this.cbxContextWindow = 50,
   });
 
   static File get _file {
@@ -98,6 +107,10 @@ class AppSettings {
           wakePhrase: map['wakePhrase'] as String? ?? 'hey mira',
           vadTimeout: map['vadTimeout'] as int? ?? 8,
           autoEnter: map['autoEnter'] as bool? ?? true,
+          cbxExaggeration: (map['cbxExaggeration'] as num?)?.toDouble() ?? 0.5,
+          cbxCfgWeight: (map['cbxCfgWeight'] as num?)?.toDouble() ?? 0.5,
+          cbxTemperature: (map['cbxTemperature'] as num?)?.toDouble() ?? 0.8,
+          cbxContextWindow: map['cbxContextWindow'] as int? ?? 50,
         );
       }
     } catch (_) {}
@@ -122,6 +135,10 @@ class AppSettings {
         'wakePhrase': wakePhrase,
         'vadTimeout': vadTimeout,
         'autoEnter': autoEnter,
+        'cbxExaggeration': cbxExaggeration,
+        'cbxCfgWeight': cbxCfgWeight,
+        'cbxTemperature': cbxTemperature,
+        'cbxContextWindow': cbxContextWindow,
       }));
     } catch (_) {}
   }

@@ -132,6 +132,10 @@ impl Pipeline {
             output_device: self.config.tts.output_device.clone(),
             language: self.config.tts.language.clone(),
             backend: self.config.tts.backend.clone(),
+            cbx_exaggeration: self.config.tts.cbx_exaggeration,
+            cbx_cfg_weight: self.config.tts.cbx_cfg_weight,
+            cbx_temperature: self.config.tts.cbx_temperature,
+            cbx_context_window: self.config.tts.cbx_context_window,
         };
         let tts_event_tx = self.event_tx.clone();
         std::thread::spawn(move || {

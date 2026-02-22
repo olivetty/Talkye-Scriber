@@ -89,6 +89,10 @@ class InterpreterScreenState extends State<InterpreterScreen> {
       ttsSpeed: 0, ttsBackend: widget.settings.ttsBackend,
       groqApiKey: '', deepgramApiKey: '',
       hfToken: '', parakeetModelDir: '', vadModelPath: '', audioOutput: '',
+      cbxExaggeration: widget.settings.cbxExaggeration,
+      cbxCfgWeight: widget.settings.cbxCfgWeight,
+      cbxTemperature: widget.settings.cbxTemperature,
+      cbxContextWindow: widget.settings.cbxContextWindow,
     )).listen(
       (event) {
         if (!mounted) return;

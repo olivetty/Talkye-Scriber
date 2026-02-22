@@ -358,7 +358,7 @@ def _process_token_chunk(
     new_tokens: torch.Tensor,
     all_tokens_so_far: torch.Tensor | None,
     context_window: int = 50,
-    fade_duration: float = 0.02,
+    fade_duration: float = 0.04,
 ):
     """Run S3Gen on a token chunk with context overlap. Returns (audio_np, duration)."""
     import numpy as np

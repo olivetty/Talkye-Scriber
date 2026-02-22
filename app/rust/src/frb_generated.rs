@@ -692,6 +692,13 @@ impl SseDecode for f32 {
     }
 }
 
+impl SseDecode for f64 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        deserializer.cursor.read_f64::<NativeEndian>().unwrap()
+    }
+}
+
 impl SseDecode for crate::api::engine::FfiAudioDevice {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -722,6 +729,10 @@ impl SseDecode for crate::api::engine::FfiEngineConfig {
         let mut var_parakeetModelDir = <String>::sse_decode(deserializer);
         let mut var_vadModelPath = <String>::sse_decode(deserializer);
         let mut var_audioOutput = <String>::sse_decode(deserializer);
+        let mut var_cbxExaggeration = <f64>::sse_decode(deserializer);
+        let mut var_cbxCfgWeight = <f64>::sse_decode(deserializer);
+        let mut var_cbxTemperature = <f64>::sse_decode(deserializer);
+        let mut var_cbxContextWindow = <i32>::sse_decode(deserializer);
         return crate::api::engine::FfiEngineConfig {
             stt_backend: var_sttBackend,
             stt_language: var_sttLanguage,
@@ -736,6 +747,10 @@ impl SseDecode for crate::api::engine::FfiEngineConfig {
             parakeet_model_dir: var_parakeetModelDir,
             vad_model_path: var_vadModelPath,
             audio_output: var_audioOutput,
+            cbx_exaggeration: var_cbxExaggeration,
+            cbx_cfg_weight: var_cbxCfgWeight,
+            cbx_temperature: var_cbxTemperature,
+            cbx_context_window: var_cbxContextWindow,
         };
     }
 }
@@ -814,6 +829,13 @@ impl SseDecode for crate::api::engine::FfiVoiceInfo {
     }
 }
 
+impl SseDecode for i32 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        deserializer.cursor.read_i32::<NativeEndian>().unwrap()
+    }
+}
+
 impl SseDecode for Vec<crate::api::engine::FfiAudioDevice> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -876,13 +898,6 @@ impl SseDecode for u8 {
 impl SseDecode for () {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {}
-}
-
-impl SseDecode for i32 {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        deserializer.cursor.read_i32::<NativeEndian>().unwrap()
-    }
 }
 
 fn pde_ffi_dispatcher_primary_impl(
@@ -969,6 +984,10 @@ impl flutter_rust_bridge::IntoDart for crate::api::engine::FfiEngineConfig {
             self.parakeet_model_dir.into_into_dart().into_dart(),
             self.vad_model_path.into_into_dart().into_dart(),
             self.audio_output.into_into_dart().into_dart(),
+            self.cbx_exaggeration.into_into_dart().into_dart(),
+            self.cbx_cfg_weight.into_into_dart().into_dart(),
+            self.cbx_temperature.into_into_dart().into_dart(),
+            self.cbx_context_window.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -1119,6 +1138,13 @@ impl SseEncode for f32 {
     }
 }
 
+impl SseEncode for f64 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        serializer.cursor.write_f64::<NativeEndian>(self).unwrap();
+    }
+}
+
 impl SseEncode for crate::api::engine::FfiAudioDevice {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -1144,6 +1170,10 @@ impl SseEncode for crate::api::engine::FfiEngineConfig {
         <String>::sse_encode(self.parakeet_model_dir, serializer);
         <String>::sse_encode(self.vad_model_path, serializer);
         <String>::sse_encode(self.audio_output, serializer);
+        <f64>::sse_encode(self.cbx_exaggeration, serializer);
+        <f64>::sse_encode(self.cbx_cfg_weight, serializer);
+        <f64>::sse_encode(self.cbx_temperature, serializer);
+        <i32>::sse_encode(self.cbx_context_window, serializer);
     }
 }
 
@@ -1201,6 +1231,13 @@ impl SseEncode for crate::api::engine::FfiVoiceInfo {
     }
 }
 
+impl SseEncode for i32 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        serializer.cursor.write_i32::<NativeEndian>(self).unwrap();
+    }
+}
+
 impl SseEncode for Vec<crate::api::engine::FfiAudioDevice> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -1255,13 +1292,6 @@ impl SseEncode for u8 {
 impl SseEncode for () {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {}
-}
-
-impl SseEncode for i32 {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        serializer.cursor.write_i32::<NativeEndian>(self).unwrap();
-    }
 }
 
 #[cfg(not(target_family = "wasm"))]

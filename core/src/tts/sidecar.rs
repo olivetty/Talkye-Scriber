@@ -85,14 +85,20 @@ fn resolve_voice_wav(voice_path: &str) -> Option<String> {
 pub struct SidecarTts {
     voice_ref: Option<String>,
     speed: f32,
+    exaggeration: f64,
+    cfg_weight: f64,
+    temperature: f64,
+    context_window: i32,
 }
 
 impl SidecarTts {
     pub fn new(config: &TtsConfig) -> Result<Self> {
         let voice_ref = resolve_voice_wav(&config.voice);
         tracing::info!(
-            "[TTS-SIDECAR] init: voice_ref={:?}",
+            "[TTS-SIDECAR] init: voice_ref={:?} exag={} cfg={} temp={} ctx_win={}",
             voice_ref.as_deref().unwrap_or("none"),
+            config.cbx_exaggeration, config.cbx_cfg_weight,
+            config.cbx_temperature, config.cbx_context_window,
         );
 
         // Verify worker is reachable
@@ -104,7 +110,14 @@ impl SidecarTts {
             Err(e) => tracing::warn!("[TTS-SIDECAR] worker not reachable: {e} — will retry on generate"),
         }
 
-        Ok(Self { voice_ref, speed: config.speed })
+        Ok(Self {
+            voice_ref,
+            speed: config.speed,
+            exaggeration: config.cbx_exaggeration,
+            cfg_weight: config.cbx_cfg_weight,
+            temperature: config.cbx_temperature,
+            context_window: config.cbx_context_window,
+        })
     }
 }
 
@@ -125,10 +138,14 @@ impl TtsBackend for SidecarTts {
         };
 
         let body = format!(
-            r#"{{"text":"{}","language_id":"{}","voice_ref":{},"exaggeration":0.5,"cfg_weight":0.5,"temperature":0.8,"chunk_size":25,"context_window":50}}"#,
+            r#"{{"text":"{}","language_id":"{}","voice_ref":{},"exaggeration":{},"cfg_weight":{},"temperature":{},"chunk_size":25,"context_window":{}}}"#,
             text.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', " "),
             lang_id,
             voice_json,
+            self.exaggeration,
+            self.cfg_weight,
+            self.temperature,
+            self.context_window,
         );
 
         tracing::info!(

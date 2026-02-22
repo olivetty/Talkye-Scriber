@@ -198,6 +198,46 @@ class _SettingsScreenState extends State<SettingsScreen> {
       const SizedBox(height: 8),
       _ttsChatterboxOption(),
       const SizedBox(height: 20),
+      // Chatterbox Quality Settings (when selected)
+      if (widget.settings.ttsBackend == 'chatterbox') ...[
+        const Text('CHATTERBOX QUALITY',
+          style: TextStyle(fontSize: 11, color: C.textMuted, fontWeight: FontWeight.w600, letterSpacing: 1)),
+        const SizedBox(height: 10),
+        _cbxSlider(
+          label: 'Exaggeration',
+          desc: 'Voice expressiveness',
+          value: widget.settings.cbxExaggeration,
+          min: 0.0, max: 1.0,
+          onChanged: (v) => setState(() { widget.settings.cbxExaggeration = _round2(v); widget.settings.save(); }),
+        ),
+        const SizedBox(height: 6),
+        _cbxSlider(
+          label: 'CFG Weight',
+          desc: 'Reference voice adherence',
+          value: widget.settings.cbxCfgWeight,
+          min: 0.0, max: 1.0,
+          onChanged: (v) => setState(() { widget.settings.cbxCfgWeight = _round2(v); widget.settings.save(); }),
+        ),
+        const SizedBox(height: 6),
+        _cbxSlider(
+          label: 'Temperature',
+          desc: 'Generation variability',
+          value: widget.settings.cbxTemperature,
+          min: 0.1, max: 1.0,
+          onChanged: (v) => setState(() { widget.settings.cbxTemperature = _round2(v); widget.settings.save(); }),
+        ),
+        const SizedBox(height: 6),
+        _cbxSlider(
+          label: 'Context Window',
+          desc: 'Overlap tokens for smooth boundaries',
+          value: widget.settings.cbxContextWindow.toDouble(),
+          min: 25, max: 100, divisions: 15, isInt: true,
+          onChanged: (v) => setState(() { widget.settings.cbxContextWindow = v.round(); widget.settings.save(); }),
+        ),
+        const SizedBox(height: 8),
+        _cbxPresets(),
+        const SizedBox(height: 20),
+      ],
       // Audio + About side by side
       Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Expanded(child: _miniSection('AUDIO', [
@@ -415,6 +455,94 @@ class _SettingsScreenState extends State<SettingsScreen> {
             const SizedBox(width: 4),
             Text(label, style: const TextStyle(fontSize: 10, color: C.textSub)),
           ]),
+        ),
+      ),
+    );
+  }
+
+  static double _round2(double v) => (v * 100).roundToDouble() / 100;
+
+  Widget _cbxSlider({
+    required String label,
+    required String desc,
+    required double value,
+    required double min,
+    required double max,
+    required ValueChanged<double> onChanged,
+    int? divisions,
+    bool isInt = false,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(color: C.level1, borderRadius: BorderRadius.circular(10)),
+      child: Row(children: [
+        SizedBox(width: 110, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(label, style: const TextStyle(fontSize: 12, color: C.text, fontWeight: FontWeight.w500)),
+          Text(desc, style: const TextStyle(fontSize: 10, color: C.textSub)),
+        ])),
+        Expanded(child: SliderTheme(
+          data: SliderThemeData(
+            activeTrackColor: C.accent,
+            inactiveTrackColor: C.level2,
+            thumbColor: C.accent,
+            overlayColor: C.accent.withAlpha(30),
+            trackHeight: 3,
+            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+          ),
+          child: Slider(
+            value: value.clamp(min, max),
+            min: min, max: max,
+            divisions: divisions ?? ((max - min) * 20).round(),
+            onChanged: onChanged,
+          ),
+        )),
+        SizedBox(width: 36, child: Text(
+          isInt ? value.round().toString() : value.toStringAsFixed(2),
+          style: const TextStyle(fontSize: 11, color: C.accent, fontWeight: FontWeight.w600),
+          textAlign: TextAlign.right,
+        )),
+      ]),
+    );
+  }
+
+  Widget _cbxPresets() {
+    return Row(children: [
+      const Text('Presets:', style: TextStyle(fontSize: 11, color: C.textSub)),
+      const SizedBox(width: 8),
+      _presetBtn('Natural', 0.5, 0.5, 0.8, 50),
+      const SizedBox(width: 6),
+      _presetBtn('Expressive', 0.7, 0.5, 0.85, 50),
+      const SizedBox(width: 6),
+      _presetBtn('Smooth', 0.4, 0.3, 0.7, 75),
+    ]);
+  }
+
+  Widget _presetBtn(String label, double exag, double cfg, double temp, int ctx) {
+    final isActive = widget.settings.cbxExaggeration == exag &&
+        widget.settings.cbxCfgWeight == cfg &&
+        widget.settings.cbxTemperature == temp &&
+        widget.settings.cbxContextWindow == ctx;
+    return GestureDetector(
+      onTap: () => setState(() {
+        widget.settings.cbxExaggeration = exag;
+        widget.settings.cbxCfgWeight = cfg;
+        widget.settings.cbxTemperature = temp;
+        widget.settings.cbxContextWindow = ctx;
+        widget.settings.save();
+      }),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(
+            color: isActive ? C.accent.withAlpha(20) : C.level1,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: isActive ? C.accent.withAlpha(60) : C.level2),
+          ),
+          child: Text(label, style: TextStyle(
+            fontSize: 10, fontWeight: FontWeight.w500,
+            color: isActive ? C.accent : C.textSub,
+          )),
         ),
       ),
     );

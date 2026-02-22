@@ -667,6 +667,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  double dco_decode_f_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as double;
+  }
+
+  @protected
   FfiAudioDevice dco_decode_ffi_audio_device(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -683,8 +689,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   FfiEngineConfig dco_decode_ffi_engine_config(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 13)
-      throw Exception('unexpected arr length: expect 13 but see ${arr.length}');
+    if (arr.length != 17)
+      throw Exception('unexpected arr length: expect 17 but see ${arr.length}');
     return FfiEngineConfig(
       sttBackend: dco_decode_String(arr[0]),
       sttLanguage: dco_decode_String(arr[1]),
@@ -699,6 +705,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       parakeetModelDir: dco_decode_String(arr[10]),
       vadModelPath: dco_decode_String(arr[11]),
       audioOutput: dco_decode_String(arr[12]),
+      cbxExaggeration: dco_decode_f_64(arr[13]),
+      cbxCfgWeight: dco_decode_f_64(arr[14]),
+      cbxTemperature: dco_decode_f_64(arr[15]),
+      cbxContextWindow: dco_decode_i_32(arr[16]),
     );
   }
 
@@ -753,6 +763,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       isPrecomputed: dco_decode_bool(arr[2]),
       sizeBytes: dco_decode_u_64(arr[3]),
     );
+  }
+
+  @protected
+  int dco_decode_i_32(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as int;
   }
 
   @protected
@@ -848,6 +864,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  double sse_decode_f_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getFloat64();
+  }
+
+  @protected
   FfiAudioDevice sse_decode_ffi_audio_device(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_name = sse_decode_String(deserializer);
@@ -876,6 +898,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_parakeetModelDir = sse_decode_String(deserializer);
     var var_vadModelPath = sse_decode_String(deserializer);
     var var_audioOutput = sse_decode_String(deserializer);
+    var var_cbxExaggeration = sse_decode_f_64(deserializer);
+    var var_cbxCfgWeight = sse_decode_f_64(deserializer);
+    var var_cbxTemperature = sse_decode_f_64(deserializer);
+    var var_cbxContextWindow = sse_decode_i_32(deserializer);
     return FfiEngineConfig(
       sttBackend: var_sttBackend,
       sttLanguage: var_sttLanguage,
@@ -890,6 +916,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       parakeetModelDir: var_parakeetModelDir,
       vadModelPath: var_vadModelPath,
       audioOutput: var_audioOutput,
+      cbxExaggeration: var_cbxExaggeration,
+      cbxCfgWeight: var_cbxCfgWeight,
+      cbxTemperature: var_cbxTemperature,
+      cbxContextWindow: var_cbxContextWindow,
     );
   }
 
@@ -956,6 +986,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  int sse_decode_i_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getInt32();
+  }
+
+  @protected
   List<FfiAudioDevice> sse_decode_list_ffi_audio_device(
     SseDeserializer deserializer,
   ) {
@@ -1011,12 +1047,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @protected
   void sse_decode_unit(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-  }
-
-  @protected
-  int sse_decode_i_32(SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return deserializer.buffer.getInt32();
   }
 
   @protected
@@ -1090,6 +1120,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_f_64(double self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putFloat64(self);
+  }
+
+  @protected
   void sse_encode_ffi_audio_device(
     FfiAudioDevice self,
     SseSerializer serializer,
@@ -1119,6 +1155,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.parakeetModelDir, serializer);
     sse_encode_String(self.vadModelPath, serializer);
     sse_encode_String(self.audioOutput, serializer);
+    sse_encode_f_64(self.cbxExaggeration, serializer);
+    sse_encode_f_64(self.cbxCfgWeight, serializer);
+    sse_encode_f_64(self.cbxTemperature, serializer);
+    sse_encode_i_32(self.cbxContextWindow, serializer);
   }
 
   @protected
@@ -1169,6 +1209,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.path, serializer);
     sse_encode_bool(self.isPrecomputed, serializer);
     sse_encode_u_64(self.sizeBytes, serializer);
+  }
+
+  @protected
+  void sse_encode_i_32(int self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putInt32(self);
   }
 
   @protected
@@ -1226,11 +1272,5 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @protected
   void sse_encode_unit(void self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-  }
-
-  @protected
-  void sse_encode_i_32(int self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    serializer.buffer.putInt32(self);
   }
 }
