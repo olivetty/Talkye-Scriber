@@ -303,19 +303,8 @@ def wakeword_clear_samples():
 
 
 # ── Local LLM ──
-
-@app.on_event("startup")
-async def load_local_llm():
-    """Try to load local LLM on startup (non-blocking)."""
-    import threading
-    def _load():
-        try:
-            from llm_local import local_llm
-            if local_llm.available:
-                local_llm.load()
-        except Exception as e:
-            logger.info("Local LLM not loaded: %s", e)
-    threading.Thread(target=_load, daemon=True, name="llm-load").start()
+# LLM is loaded on-demand when user enters Chat screen,
+# and unloaded when they leave. Saves ~3.4GB VRAM.
 
 
 @app.get("/llm/status")
@@ -337,6 +326,32 @@ def llm_status():
         }
     except ImportError:
         return {"available": False, "loaded": False, "model_path": "", "lib_installed": False}
+
+
+@app.post("/llm/load")
+def llm_load():
+    """Load LLM into GPU memory (called when entering Chat screen)."""
+    try:
+        from llm_local import local_llm
+        if local_llm.loaded:
+            return {"ok": True, "message": "Already loaded"}
+        if not local_llm.available:
+            return {"ok": False, "error": "Model not downloaded"}
+        ok = local_llm.load()
+        return {"ok": ok}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/llm/unload")
+def llm_unload():
+    """Unload LLM from GPU memory (called when leaving Chat screen)."""
+    try:
+        from llm_local import local_llm
+        local_llm.unload()
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 class LLMDownloadRequest(BaseModel):
@@ -513,6 +528,13 @@ def install_chatterbox():
                    capture_output=True, text=True, timeout=10)
         ok = r.returncode == 0 and "ok" in r.stdout
         output_lines.append("chatterbox-tts installed OK" if ok else "verification failed")
+        # Invalidate installed cache so status reflects the change
+        if ok:
+            try:
+                from tts_chatterbox import chatterbox_tts
+                chatterbox_tts.invalidate_cache()
+            except Exception:
+                pass
         return {"ok": ok, "output": "\n".join(output_lines)[-500:]}
 
     except Exception as e:

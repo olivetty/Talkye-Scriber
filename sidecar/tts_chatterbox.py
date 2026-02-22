@@ -169,6 +169,7 @@ class ChatterboxTTS:
     def __init__(self):
         self._worker_proc: subprocess.Popen | None = None
         self._gpu_info: dict | None = None
+        self._installed_cache: bool | None = None
         self._lock = threading.Lock()
 
     @property
@@ -186,16 +187,23 @@ class ChatterboxTTS:
     @property
     def installed(self) -> bool:
         """True if venv-chatterbox exists with chatterbox-tts installed."""
+        if self._installed_cache is not None:
+            return self._installed_cache
         if not _WORKER_PYTHON.is_file():
             return False
         try:
             result = subprocess.run(
                 [str(_WORKER_PYTHON), "-c", "import chatterbox; print('ok')"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True, text=True, timeout=15,
             )
-            return result.returncode == 0 and "ok" in result.stdout
+            self._installed_cache = result.returncode == 0 and "ok" in result.stdout
+            return self._installed_cache
         except Exception:
             return False
+
+    def invalidate_cache(self):
+        """Clear installed cache (after install/uninstall)."""
+        self._installed_cache = None
 
     @property
     def available(self) -> bool:

@@ -14,7 +14,9 @@ class ChatMessage {
 }
 
 class ChatScreen extends StatefulWidget {
-  const ChatScreen({super.key});
+  final VoidCallback? onEnter;
+  final VoidCallback? onLeave;
+  const ChatScreen({super.key, this.onEnter, this.onLeave});
   @override
   State<ChatScreen> createState() => _ChatScreenState();
 }
@@ -27,6 +29,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _loading = false;
   bool _llmAvailable = false;
   bool _llmLoaded = false;
+  bool _llmLoading = false;
   bool _downloading = false;
   String _streamBuffer = '';
 
@@ -39,12 +42,19 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    _checkLlmStatus().then((_) => _maybeAutoDownload());
+    _checkLlmStatus().then((_) {
+      if (_llmAvailable && !_llmLoaded) {
+        _loadLlm();
+      } else if (!_llmAvailable) {
+        _maybeAutoDownload();
+      }
+    });
   }
 
   @override
   void dispose() {
     _stopVoiceChat();
+    _unloadLlm();
     _controller.dispose();
     _scrollController.dispose();
     _focusNode.dispose();
@@ -78,6 +88,41 @@ class _ChatScreenState extends State<ChatScreen> {
         }
       });
     }
+  }
+
+  Future<void> _loadLlm() async {
+    if (_llmLoaded || _llmLoading) return;
+    setState(() => _llmLoading = true);
+    try {
+      final c = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+      final req = await c.postUrl(Uri.parse('$_baseUrl/llm/load'));
+      req.headers.set('Content-Type', 'application/json');
+      req.write('{}');
+      final resp = await req.close().timeout(const Duration(seconds: 30));
+      final data = await resp.transform(utf8.decoder).join();
+      c.close();
+      final result = jsonDecode(data) as Map<String, dynamic>;
+      if (mounted) {
+        setState(() {
+          _llmLoaded = result['ok'] == true;
+          _llmLoading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _llmLoading = false);
+    }
+  }
+
+  void _unloadLlm() {
+    // Fire-and-forget — don't await, we're disposing
+    try {
+      final c = HttpClient()..connectionTimeout = const Duration(seconds: 2);
+      c.postUrl(Uri.parse('$_baseUrl/llm/unload')).then((req) {
+        req.headers.set('Content-Type', 'application/json');
+        req.write('{}');
+        req.close().timeout(const Duration(seconds: 3)).then((_) => c.close());
+      });
+    } catch (_) {}
   }
 
   Future<void> _maybeAutoDownload() async {
@@ -119,10 +164,10 @@ class _ChatScreenState extends State<ChatScreen> {
       c.close();
       final result = jsonDecode(data) as Map<String, dynamic>;
       if (result['ok'] == true) {
-        for (var i = 0; i < 30; i++) {
-          await Future.delayed(const Duration(seconds: 2));
-          await _checkLlmStatus();
-          if (_llmLoaded) break;
+        // Model downloaded — now load it
+        await _checkLlmStatus();
+        if (_llmAvailable && !_llmLoaded) {
+          await _loadLlm();
         }
       }
     } catch (_) {
@@ -375,13 +420,18 @@ class _ChatScreenState extends State<ChatScreen> {
             borderRadius: BorderRadius.circular(6)),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
             Container(width: 6, height: 6, decoration: BoxDecoration(shape: BoxShape.circle,
-              color: _llmLoaded ? C.success : (_llmAvailable ? C.warning : C.textMuted))),
+              color: _llmLoaded ? C.success : (_llmLoading ? C.warning : (_llmAvailable ? C.warning : C.textMuted)))),
             const SizedBox(width: 6),
             Text(
-              _llmLoaded ? 'Qwen3-1.7B' : (_llmAvailable ? 'Loading...' : 'No model'),
+              _llmLoaded ? 'Qwen3-1.7B' : (_llmLoading ? 'Loading model...' : (_llmAvailable ? 'Ready' : 'No model')),
               style: TextStyle(fontSize: 11,
                 color: _llmLoaded ? C.success : C.textMuted,
                 fontWeight: FontWeight.w500)),
+            if (_llmLoading) ...[
+              const SizedBox(width: 6),
+              const SizedBox(width: 10, height: 10,
+                child: CircularProgressIndicator(strokeWidth: 1.5, color: C.warning)),
+            ],
           ]),
         ),
         const Spacer(),
