@@ -92,6 +92,23 @@ async def startup():
     logger.info("Desktop PTT thread started")
 
 
+@app.on_event("startup")
+async def auto_load_chatterbox():
+    """Auto-load Chatterbox if selected in settings."""
+    def _load():
+        try:
+            from tts import get_backend_from_settings
+            if get_backend_from_settings() != "chatterbox":
+                return
+            from tts_chatterbox import chatterbox_tts
+            if chatterbox_tts.available:
+                logger.info("Auto-loading Chatterbox (selected in settings)...")
+                chatterbox_tts.load()
+        except Exception as e:
+            logger.info("Chatterbox auto-load skipped: %s", e)
+    threading.Thread(target=_load, daemon=True, name="cbx-autoload").start()
+
+
 @app.on_event("shutdown")
 async def shutdown():
     """Stop Chatterbox worker on server shutdown."""
