@@ -464,7 +464,7 @@ class _AppShellState extends State<AppShell> with WindowListener {
           onRestartSidecar: restartSidecar,
         );
       case NavSection.chat:
-        return const ChatScreen();
+        return ChatScreen(settings: _settings);
       case NavSection.assistant:
         return _comingSoon('Meeting Assistant', Icons.groups_rounded,
           'AI-powered meeting notes with speaker diarization.');

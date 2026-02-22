@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import '../theme.dart';
+import '../main.dart';
+import '../src/rust/api/engine.dart';
 
 const _baseUrl = 'http://127.0.0.1:8179';
 
@@ -24,10 +26,18 @@ class _ChatModel {
     required this.available, required this.supportsThinking, required this.cloud});
 }
 
+class _VoiceOption {
+  final String name;
+  final String path;
+  final bool builtin;
+  const _VoiceOption({required this.name, required this.path, required this.builtin});
+}
+
 class ChatScreen extends StatefulWidget {
   final VoidCallback? onEnter;
   final VoidCallback? onLeave;
-  const ChatScreen({super.key, this.onEnter, this.onLeave});
+  final AppSettings settings;
+  const ChatScreen({super.key, this.onEnter, this.onLeave, required this.settings});
   @override
   State<ChatScreen> createState() => _ChatScreenState();
 }
@@ -54,6 +64,9 @@ class _ChatScreenState extends State<ChatScreen> {
   String _voiceState = 'stopped';
   WebSocket? _voiceWs;
   bool _ttsAvailable = false;
+
+  // Voice selection
+  List<_VoiceOption> _voices = [];
 
   // Voice chat language
   String _voiceLang = 'en';
@@ -85,7 +98,20 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    _loadVoices();
     _init();
+  }
+
+  void _loadVoices() {
+    final custom = listVoices();
+    final builtinDir = '${voicesDir()}/builtin';
+    final voices = <_VoiceOption>[
+      _VoiceOption(name: 'Cosette', path: '$builtinDir/cosette.safetensors', builtin: true),
+      _VoiceOption(name: 'Marius', path: '$builtinDir/marius.safetensors', builtin: true),
+      for (final v in custom)
+        _VoiceOption(name: v.name, path: v.path, builtin: false),
+    ];
+    setState(() => _voices = voices);
   }
 
   Future<void> _init() async {
@@ -472,6 +498,9 @@ class _ChatScreenState extends State<ChatScreen> {
         const Spacer(),
         // Voice mode toggle
         if (_modelReady && _ttsAvailable) ...[
+          // Voice selector
+          _voiceSelector(),
+          const SizedBox(width: 6),
           // Language selector for voice mode
           _voiceLangSelector(),
           const SizedBox(width: 6),
@@ -639,6 +668,71 @@ class _ChatScreenState extends State<ChatScreen> {
           const Icon(Icons.language_rounded, size: 12, color: C.textMuted),
           const SizedBox(width: 4),
           Text(label, style: const TextStyle(fontSize: 10, color: C.textSub, fontWeight: FontWeight.w500)),
+          const SizedBox(width: 2),
+          const Icon(Icons.expand_more_rounded, size: 12, color: C.textMuted),
+        ]),
+      ),
+    );
+  }
+
+  Widget _voiceSelector() {
+    final activePath = widget.settings.activeVoicePath;
+    String activeLabel = 'No voice';
+    for (final v in _voices) {
+      if (v.path == activePath) { activeLabel = v.name; break; }
+    }
+    if (activeLabel.isNotEmpty && activeLabel != 'No voice') {
+      activeLabel = activeLabel[0].toUpperCase() + activeLabel.substring(1);
+    }
+
+    return PopupMenuButton<String>(
+      onSelected: (path) {
+        setState(() { widget.settings.activeVoicePath = path; widget.settings.save(); });
+      },
+      offset: const Offset(0, 36),
+      color: C.level3,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      itemBuilder: (_) {
+        final items = <PopupMenuEntry<String>>[];
+        final builtins = _voices.where((v) => v.builtin).toList();
+        final custom = _voices.where((v) => !v.builtin).toList();
+        if (builtins.isNotEmpty) {
+          items.add(const PopupMenuItem<String>(enabled: false, height: 22,
+            child: Text('STANDARD', style: TextStyle(fontSize: 9, color: C.textMuted, fontWeight: FontWeight.w600, letterSpacing: 1))));
+          for (final v in builtins) {
+            items.add(PopupMenuItem(value: v.path, height: 34, child: Row(children: [
+              Icon(v.path == activePath ? Icons.radio_button_checked_rounded : Icons.radio_button_off_rounded,
+                size: 13, color: v.path == activePath ? C.accent : C.textMuted),
+              const SizedBox(width: 6),
+              Text(v.name, style: TextStyle(fontSize: 12, color: v.path == activePath ? C.accent : C.text,
+                fontWeight: v.path == activePath ? FontWeight.w600 : FontWeight.w400)),
+            ])));
+          }
+        }
+        if (custom.isNotEmpty) {
+          if (builtins.isNotEmpty) items.add(const PopupMenuDivider(height: 6));
+          items.add(const PopupMenuItem<String>(enabled: false, height: 22,
+            child: Text('MY VOICES', style: TextStyle(fontSize: 9, color: C.textMuted, fontWeight: FontWeight.w600, letterSpacing: 1))));
+          for (final v in custom) {
+            final label = v.name[0].toUpperCase() + v.name.substring(1);
+            items.add(PopupMenuItem(value: v.path, height: 34, child: Row(children: [
+              Icon(v.path == activePath ? Icons.radio_button_checked_rounded : Icons.radio_button_off_rounded,
+                size: 13, color: v.path == activePath ? C.accent : C.textMuted),
+              const SizedBox(width: 6),
+              Text(label, style: TextStyle(fontSize: 12, color: v.path == activePath ? C.accent : C.text,
+                fontWeight: v.path == activePath ? FontWeight.w600 : FontWeight.w400)),
+            ])));
+          }
+        }
+        return items;
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(color: C.level2, borderRadius: BorderRadius.circular(6)),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.record_voice_over_rounded, size: 11, color: C.accent),
+          const SizedBox(width: 4),
+          Text(activeLabel, style: const TextStyle(fontSize: 10, color: C.text, fontWeight: FontWeight.w500)),
           const SizedBox(width: 2),
           const Icon(Icons.expand_more_rounded, size: 12, color: C.textMuted),
         ]),
