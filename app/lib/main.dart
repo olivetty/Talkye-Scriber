@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -113,7 +114,10 @@ class AppSettings {
           cbxContextWindow: map['cbxContextWindow'] as int? ?? 50,
         );
       }
-    } catch (_) {}
+    } catch (e) {
+      // Log corruption so user knows settings were reset
+      stderr.writeln('WARNING: Failed to load settings, using defaults: $e');
+    }
     return AppSettings();
   }
 
@@ -140,7 +144,9 @@ class AppSettings {
         'cbxTemperature': cbxTemperature,
         'cbxContextWindow': cbxContextWindow,
       }));
-    } catch (_) {}
+    } catch (e) {
+      stderr.writeln('WARNING: Failed to save settings: $e');
+    }
   }
 }
 
@@ -206,6 +212,8 @@ class _AppShellState extends State<AppShell> with WindowListener {
     final candidates = [
       '$projectRoot/sidecar',
       '${Platform.environment['HOME']}/Code/talkye-meet/sidecar',
+      // Relative to current working directory
+      '${Directory.current.path}/sidecar',
     ];
 
     String? sidecarDir;
@@ -244,18 +252,23 @@ class _AppShellState extends State<AppShell> with WindowListener {
 
     // Run setup.sh — creates venv, installs deps, detects CUDA for llama-cpp-python
     LogBuffer.add('SIDECAR: running setup...');
-    final setupResult = await Process.run(
-      'bash', ['$sidecarDir/setup.sh'],
-      workingDirectory: sidecarDir,
-    );
-    if (setupResult.exitCode != 0) {
-      LogBuffer.add('SIDECAR: setup failed: ${setupResult.stderr}');
-      // Try to continue if venv already exists
-      if (!await File(venvPython).exists()) return;
-    } else {
-      for (final line in (setupResult.stdout as String).split('\n')) {
-        if (line.trim().isNotEmpty) LogBuffer.add('SIDECAR: $line');
+    try {
+      final setupResult = await Process.run(
+        'bash', ['$sidecarDir/setup.sh'],
+        workingDirectory: sidecarDir,
+      ).timeout(const Duration(minutes: 3));
+      if (setupResult.exitCode != 0) {
+        LogBuffer.add('SIDECAR: setup failed: ${setupResult.stderr}');
+        // Try to continue if venv already exists
+        if (!await File(venvPython).exists()) return;
+      } else {
+        for (final line in (setupResult.stdout as String).split('\n')) {
+          if (line.trim().isNotEmpty) LogBuffer.add('SIDECAR: $line');
+        }
       }
+    } on TimeoutException {
+      LogBuffer.add('SIDECAR: setup.sh timed out after 3 minutes');
+      if (!await File(venvPython).exists()) return;
     }
 
     LogBuffer.add('SIDECAR: starting on :8179...');

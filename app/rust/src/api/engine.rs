@@ -175,7 +175,7 @@ pub fn start_engine(config: FfiEngineConfig, sink: StreamSink<FfiEngineEvent>) {
                 output_device: opt(audio_output),
                 language: if to_lang.is_empty() { "English".into() } else { to_lang },
                 backend: if tts_backend.is_empty() { "pocket".into() } else { tts_backend },
-                cbx_exaggeration: if config.cbx_exaggeration > 0.0 { config.cbx_exaggeration } else { 0.5 },
+                cbx_exaggeration: if config.cbx_exaggeration >= 0.0 { config.cbx_exaggeration } else { 0.5 },
                 cbx_cfg_weight: if config.cbx_cfg_weight >= 0.0 { config.cbx_cfg_weight } else { 0.5 },
                 cbx_temperature: if config.cbx_temperature > 0.0 { config.cbx_temperature } else { 0.8 },
                 cbx_context_window: if config.cbx_context_window > 0 { config.cbx_context_window } else { 50 },

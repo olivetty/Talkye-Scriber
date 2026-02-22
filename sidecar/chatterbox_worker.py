@@ -29,6 +29,23 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Chatterbox Worker", version="0.1.0")
 
+# Allowed voice directory — only serve files from here
+_VOICES_DIR = os.path.expanduser("~/.config/talkye/voices")
+
+
+def _validate_voice_path(path: str | None) -> str | None:
+    """Validate that voice_ref points to a file inside the voices directory."""
+    if not path:
+        return None
+    real = os.path.realpath(path)
+    allowed = os.path.realpath(_VOICES_DIR)
+    if not real.startswith(allowed + os.sep) and real != allowed:
+        logger.warning("Rejected voice path outside voices dir: %s", path)
+        return None
+    if not os.path.isfile(real):
+        return None
+    return real
+
 # ── Model state ──
 _model = None
 _model_lock = threading.Lock()
@@ -164,8 +181,9 @@ def generate(req: GenerateRequest):
             "exaggeration": req.exaggeration,
             "cfg_weight": req.cfg_weight,
         }
-        if req.voice_ref and os.path.isfile(req.voice_ref):
-            kwargs["audio_prompt_path"] = req.voice_ref
+        voice = _validate_voice_path(req.voice_ref)
+        if voice:
+            kwargs["audio_prompt_path"] = voice
 
         wav_tensor = _model.generate(req.text, **kwargs)
         elapsed = time.perf_counter() - t0
@@ -431,8 +449,9 @@ def generate_stream(req: StreamGenerateRequest):
         total_audio = 0.0
 
         # Prepare conditionals
-        if req.voice_ref and os.path.isfile(req.voice_ref):
-            _model.prepare_conditionals(req.voice_ref, exaggeration=req.exaggeration)
+        voice = _validate_voice_path(req.voice_ref)
+        if voice:
+            _model.prepare_conditionals(voice, exaggeration=req.exaggeration)
         elif _model.conds is None:
             yield f"data: {json.dumps({'error': 'No voice reference'})}\n\n"
             return

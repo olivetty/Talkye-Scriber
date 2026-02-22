@@ -80,7 +80,10 @@ impl AudioPlayback {
                     output.fill(0.0);
                     return;
                 }
-                let mut buf = buf_cb.lock().unwrap();
+                let Ok(mut buf) = buf_cb.lock() else {
+                    output.fill(0.0);
+                    return;
+                };
                 for sample in output.iter_mut() {
                     if let Some(s) = buf.pop_front() {
                         *sample = s;

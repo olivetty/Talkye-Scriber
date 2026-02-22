@@ -5,6 +5,7 @@
 //! Supports 23 languages with voice cloning.
 
 use anyhow::{Context, Result};
+use serde::Serialize;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::time::Instant;
@@ -17,8 +18,10 @@ const WORKER_PORT: u16 = 8180;
 const SAMPLE_RATE: usize = 24000;
 
 /// Map full language names (from translate config) to ISO 639-1 codes.
-fn lang_to_iso(lang: &str) -> &str {
-    match lang.to_lowercase().as_str() {
+/// Returns an owned String to avoid lifetime issues with dynamic codes.
+fn lang_to_iso(lang: &str) -> String {
+    let lower = lang.to_lowercase();
+    match lower.as_str() {
         "arabic" => "ar",
         "danish" => "da",
         "german" | "deutsch" => "de",
@@ -42,10 +45,10 @@ fn lang_to_iso(lang: &str) -> &str {
         "swahili" => "sw",
         "turkish" | "türkçe" => "tr",
         "chinese" | "mandarin" => "zh",
-        // If already an ISO code, pass through
-        s if s.len() == 2 => lang.to_lowercase().leak(),
+        // If already a 2-char ISO code, pass through (no leak!)
+        s if s.len() == 2 => return lower,
         _ => "en", // fallback
-    }
+    }.to_string()
 }
 
 /// Resolve voice path to a .wav file for Chatterbox.
@@ -109,6 +112,20 @@ pub struct SidecarTts {
     context_window: i32,
 }
 
+/// JSON payload for Chatterbox streaming TTS.
+#[derive(Serialize)]
+struct StreamRequest<'a> {
+    text: &'a str,
+    language_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    voice_ref: Option<&'a str>,
+    exaggeration: f64,
+    cfg_weight: f64,
+    temperature: f64,
+    chunk_size: i32,
+    context_window: i32,
+}
+
 impl SidecarTts {
     pub fn new(config: &TtsConfig) -> Result<Self> {
         let voice_ref = resolve_voice_wav(&config.voice);
@@ -149,22 +166,18 @@ impl TtsBackend for SidecarTts {
         let t0 = Instant::now();
         let lang_id = lang_to_iso(language);
 
-        // Build JSON payload
-        let voice_json = match &self.voice_ref {
-            Some(p) => format!("\"{}\"", p.replace('\\', "\\\\").replace('"', "\\\"")),
-            None => "null".to_string(),
+        // Build JSON payload (serde handles escaping correctly)
+        let req = StreamRequest {
+            text,
+            language_id: &lang_id,
+            voice_ref: self.voice_ref.as_deref(),
+            exaggeration: self.exaggeration,
+            cfg_weight: self.cfg_weight,
+            temperature: self.temperature,
+            chunk_size: 25,
+            context_window: self.context_window,
         };
-
-        let body = format!(
-            r#"{{"text":"{}","language_id":"{}","voice_ref":{},"exaggeration":{},"cfg_weight":{},"temperature":{},"chunk_size":25,"context_window":{}}}"#,
-            text.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', " "),
-            lang_id,
-            voice_json,
-            self.exaggeration,
-            self.cfg_weight,
-            self.temperature,
-            self.context_window,
-        );
+        let body = serde_json::to_string(&req).context("Failed to serialize TTS request")?;
 
         tracing::info!(
             "[TTS-SIDECAR] requesting: lang={lang_id} text=\"{}\" voice={:?}",

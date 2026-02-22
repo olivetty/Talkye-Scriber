@@ -43,7 +43,8 @@ app = FastAPI(title="Talkye Sidecar", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://127.0.0.1:*", "http://localhost:*"],
+    allow_origin_regex=r"^https?://(127\.0\.0\.1|localhost)(:\d+)?$",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -54,9 +55,9 @@ _desktop_thread: threading.Thread | None = None
 _desktop_running = False
 
 
-async def _broadcast(event_type: str, data: dict = {}):
+async def _broadcast(event_type: str, data: dict | None = None):
     """Send event to all connected WebSocket clients."""
-    msg = json.dumps({"type": event_type, **data})
+    msg = json.dumps({"type": event_type, **(data or {})})
     dead = []
     for ws in _ws_clients:
         try:

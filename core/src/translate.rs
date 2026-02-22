@@ -33,12 +33,17 @@ struct LangPair {
 
 impl Translator {
     pub fn new(config: &TranslateConfig) -> Self {
+        let client = Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap_or_else(|_| Client::new());
         Self {
             from_lang: config.from_lang.clone(),
             to_lang: config.to_lang.clone(),
             model: config.model.clone(),
             api_key: config.api_key.clone(),
-            client: Client::new(),
+            client,
             context: Mutex::new(Vec::new()),
             segment: Mutex::new(Vec::new()),
         }
@@ -91,6 +96,14 @@ impl Translator {
             .await
             .context("Groq API request failed")?;
 
+        // Check HTTP status before parsing
+        let status = resp.status();
+        if !status.is_success() {
+            let err_body = resp.text().await.unwrap_or_default();
+            let snippet = if err_body.len() > 200 { &err_body[..200] } else { &err_body };
+            anyhow::bail!("Groq API HTTP {status}: {snippet}");
+        }
+
         let data: GroqResponse = resp.json().await.context("Failed to parse Groq response")?;
         let translated = data.choices.first()
             .map(|c| c.message.content.trim().to_string())
@@ -139,6 +152,11 @@ impl Translator {
         };
         if let Ok(mut s) = self.segment.lock() {
             s.push(pair.clone());
+            // Cap segment to prevent unbounded growth during long continuous speech
+            if s.len() > 20 {
+                let drain_to = s.len() - 10;
+                s.drain(..drain_to);
+            }
         }
         if let Ok(mut ctx) = self.context.lock() {
             ctx.push(pair);
