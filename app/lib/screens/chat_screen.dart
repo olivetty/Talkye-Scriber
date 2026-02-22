@@ -263,7 +263,7 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
     setState(() { _voiceMode = true; _voiceState = 'connecting'; });
-    _voiceWs!.add(jsonEncode({'action': 'start'}));
+    _voiceWs!.add(jsonEncode({'action': 'start', 'model': _selectedModel}));
     _voiceWs!.listen(
       (data) {
         if (!mounted) return;
@@ -441,7 +441,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _modelSelector(),
         const Spacer(),
         // Voice mode toggle
-        if (_modelReady && _ttsAvailable && !_isCloudModel)
+        if (_modelReady && _ttsAvailable)
           GestureDetector(
             onTap: _toggleVoiceMode,
             child: MouseRegion(
