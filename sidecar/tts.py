@@ -21,6 +21,24 @@ logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
 _TTS_BIN = os.path.join(_PROJECT_ROOT, "core", "target", "release", "tts_speak")
+_SETTINGS_PATH = os.path.join(
+    os.getenv("HOME", "/tmp"), ".config", "talkye", "settings.json"
+)
+
+
+def _get_active_voice() -> str | None:
+    """Read activeVoicePath from Flutter settings."""
+    try:
+        if os.path.isfile(_SETTINGS_PATH):
+            import json
+            with open(_SETTINGS_PATH) as f:
+                cfg = json.load(f)
+            path = cfg.get("activeVoicePath", "")
+            if path and os.path.isfile(path):
+                return path
+    except Exception:
+        pass
+    return None
 
 
 def is_available() -> bool:
@@ -52,12 +70,16 @@ def synthesize(text: str, output_path: str | None = None,
         fd, output_path = tempfile.mkstemp(suffix=".wav", prefix="tts_")
         os.close(fd)
 
+    # Use Flutter's active voice if no override specified
+    if voice is None:
+        voice = _get_active_voice()
+
     cmd = [_TTS_BIN, text, output_path]
     if voice:
         cmd.append(voice)
         cmd.append(str(speed))
     elif speed != 1.0:
-        cmd.append("")  # empty voice = use default
+        cmd.append("")  # empty voice = use default from .env
         cmd.append(str(speed))
 
     try:
