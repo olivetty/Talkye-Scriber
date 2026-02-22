@@ -66,19 +66,17 @@ Reply ONLY with CMD:name(s) or TEXT. Nothing else."""
 
 
 def detect_command(text: str) -> list[str] | None:
-    """Ask LLM if text is a voice command. Returns list of command IDs or None."""
+    """Ask LLM if text is a voice command. Returns list of command IDs or None.
+
+    Tries local LLM first (Qwen3-1.7B), falls back to cloud LLM.
+    """
     try:
-        client = config.core._get_llm_client()
-        resp = client.chat.completions.create(
-            model=config.core.llm_model,
-            messages=[
-                {"role": "system", "content": _CMD_PROMPT},
-                {"role": "user", "content": text},
-            ],
-            max_tokens=30,
-            temperature=0,
-        )
-        answer = resp.choices[0].message.content.strip()
+        answer = _detect_via_local(text)
+        if answer is None:
+            answer = _detect_via_cloud(text)
+        if answer is None:
+            return None
+
         logger.info("LLM command detection: '%s' → %s", text, answer)
 
         if answer == "TEXT":
@@ -93,6 +91,37 @@ def detect_command(text: str) -> list[str] | None:
         return cmds if cmds else None
     except Exception as e:
         logger.warning("LLM command detection failed: %s", e)
+        return None
+
+
+def _detect_via_local(text: str) -> str | None:
+    """Try local LLM for command detection."""
+    try:
+        from llm_local import local_llm
+        if not local_llm.loaded and not local_llm.available:
+            return None
+        return local_llm.classify(_CMD_PROMPT, text, max_tokens=30)
+    except Exception as e:
+        logger.debug("Local LLM not available: %s", e)
+        return None
+
+
+def _detect_via_cloud(text: str) -> str | None:
+    """Fallback to cloud LLM for command detection."""
+    try:
+        client = config.core._get_llm_client()
+        resp = client.chat.completions.create(
+            model=config.core.llm_model,
+            messages=[
+                {"role": "system", "content": _CMD_PROMPT},
+                {"role": "user", "content": text},
+            ],
+            max_tokens=30,
+            temperature=0,
+        )
+        return resp.choices[0].message.content.strip()
+    except Exception as e:
+        logger.warning("Cloud LLM failed: %s", e)
         return None
 
 

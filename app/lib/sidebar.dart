@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'theme.dart';
 
-enum NavSection { interpreter, dictate, assistant, calendar, voice, settings }
+enum NavSection { interpreter, dictate, chat, assistant, calendar, voice, settings }
 
 class Sidebar extends StatelessWidget {
   final NavSection active;
@@ -40,6 +40,8 @@ class Sidebar extends StatelessWidget {
               section: NavSection.interpreter, active: active, onTap: onSelect),
             _NavItem(icon: Icons.keyboard_voice_rounded, label: 'Scriber',
               section: NavSection.dictate, active: active, onTap: onSelect),
+            _NavItem(icon: Icons.smart_toy_outlined, label: 'Chat',
+              section: NavSection.chat, active: active, onTap: onSelect),
             _NavItem(icon: Icons.groups_rounded, label: 'Assistant',
               section: NavSection.assistant, active: active, onTap: onSelect, badge: 'Soon'),
             _NavItem(icon: Icons.calendar_month_rounded, label: 'Calendar',

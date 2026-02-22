@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 app = FastAPI(title="Talkye Sidecar", version="0.1.0")
@@ -288,6 +289,98 @@ def wakeword_clear_samples():
     if os.path.isdir(_wakeword_dir):
         shutil.rmtree(_wakeword_dir)
     return {"ok": True}
+
+
+# ── Local LLM ──
+
+@app.on_event("startup")
+async def load_local_llm():
+    """Try to load local LLM on startup (non-blocking)."""
+    import threading
+    def _load():
+        try:
+            from llm_local import local_llm
+            if local_llm.available:
+                local_llm.load()
+        except Exception as e:
+            logger.info("Local LLM not loaded: %s", e)
+    threading.Thread(target=_load, daemon=True, name="llm-load").start()
+
+
+@app.get("/llm/status")
+def llm_status():
+    """Local LLM status."""
+    try:
+        from llm_local import local_llm, _MODEL_PATH
+        return {
+            "available": local_llm.available,
+            "loaded": local_llm.loaded,
+            "model_path": _MODEL_PATH,
+        }
+    except ImportError:
+        return {"available": False, "loaded": False, "model_path": ""}
+
+
+class LLMDownloadRequest(BaseModel):
+    pass
+
+
+@app.post("/llm/download")
+def llm_download():
+    """Download the Qwen3-1.7B GGUF model."""
+    from llm_local import download_model, local_llm
+    ok = download_model()
+    if ok:
+        # Auto-load after download
+        import threading
+        threading.Thread(target=local_llm.load, daemon=True).start()
+    return {"ok": ok}
+
+
+class ChatRequest(BaseModel):
+    message: str
+    history: list = []
+    system_prompt: str | None = None
+    enable_thinking: bool = False
+    stream: bool = True
+
+
+@app.post("/chat")
+async def chat_endpoint(req: ChatRequest):
+    """Chat with local LLM. Supports streaming via SSE."""
+    from llm_local import local_llm
+
+    if not local_llm.loaded:
+        if not local_llm.load():
+            return {"error": "Local LLM not available. Download the model first."}
+
+    if req.stream:
+        def generate():
+            try:
+                for token in local_llm.chat_stream(
+                    user_message=req.message,
+                    system_prompt=req.system_prompt,
+                    history=req.history,
+                    enable_thinking=req.enable_thinking,
+                ):
+                    yield f"data: {json.dumps({'token': token})}\n\n"
+                yield "data: [DONE]\n\n"
+            except Exception as e:
+                logger.exception("Chat stream error: %s", e)
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+        return StreamingResponse(generate(), media_type="text/event-stream")
+    else:
+        try:
+            response = local_llm.chat(
+                user_message=req.message,
+                system_prompt=req.system_prompt,
+                history=req.history,
+                enable_thinking=req.enable_thinking,
+            )
+            return {"response": response}
+        except Exception as e:
+            return {"error": str(e)}
 
 
 # ── WebSocket events ──

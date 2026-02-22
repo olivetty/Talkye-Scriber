@@ -18,3 +18,6 @@ pynput>=1.7.6
 # VAD mode
 setuptools<81
 webrtcvad>=2.0.10
+
+# Local LLM (Qwen3-1.7B via llama.cpp)
+llama-cpp-python>=0.3.0

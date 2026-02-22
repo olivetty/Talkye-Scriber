@@ -109,6 +109,23 @@ rebuild_strip_variants()
 from core import DictateCore
 core = DictateCore()
 
+# ── Local LLM (lazy load) ──
+
+def _try_load_local_llm():
+    """Attempt to load local LLM in background."""
+    import logging
+    _logger = logging.getLogger(__name__)
+    try:
+        from llm_local import local_llm
+        if local_llm.available:
+            local_llm.load()
+            _logger.info("Local LLM loaded at startup")
+    except Exception as e:
+        _logger.debug("Local LLM not loaded at startup: %s", e)
+
+import threading
+threading.Thread(target=_try_load_local_llm, daemon=True, name="llm-init").start()
+
 
 def set_vad_active():
     """Set VAD to active state (processes speech without wake word)."""

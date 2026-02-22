@@ -14,6 +14,7 @@ import 'screens/interpreter_screen.dart';
 import 'screens/voice_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/dictate_screen.dart';
+import 'screens/chat_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -383,6 +384,8 @@ class _AppShellState extends State<AppShell> with WindowListener {
           settings: _settings,
           onRestartSidecar: restartSidecar,
         );
+      case NavSection.chat:
+        return const ChatScreen();
       case NavSection.assistant:
         return _comingSoon('Meeting Assistant', Icons.groups_rounded,
           'AI-powered meeting notes with speaker diarization.');
