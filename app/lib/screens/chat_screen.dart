@@ -151,12 +151,12 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
       final req = await client.postUrl(Uri.parse('$_baseUrl/chat'));
-      req.headers.set('Content-Type', 'application/json');
-      req.write(jsonEncode({
+      req.headers.set('Content-Type', 'application/json; charset=utf-8');
+      req.add(utf8.encode(jsonEncode({
         'message': text,
         'history': history,
         'stream': true,
-      }));
+      })));
       final resp = await req.close().timeout(const Duration(minutes: 2));
 
       // Add placeholder for assistant response
