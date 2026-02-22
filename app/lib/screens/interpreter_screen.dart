@@ -74,6 +74,17 @@ class InterpreterScreenState extends State<InterpreterScreen> {
 
   bool get isRunning => _running;
 
+  /// Restart engine with updated settings (e.g. voice changed).
+  void restartWithNewVoice() {
+    if (!_running) return;
+    LogBuffer.add('Restarting engine (voice changed)...');
+    _stop();
+    // Small delay to let engine fully stop before restarting
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (mounted) _start();
+    });
+  }
+
   void _toggle() => _running ? _stop() : _start();
 
   void _start() {

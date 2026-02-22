@@ -474,7 +474,14 @@ class _AppShellState extends State<AppShell> with WindowListener {
       case NavSection.voice:
         return VoiceScreen(
           activeVoicePath: _settings.activeVoicePath,
-          onVoiceChanged: (path) => setState(() { _settings.activeVoicePath = path; _settings.save(); }),
+          onVoiceChanged: (path) {
+            final changed = _settings.activeVoicePath != path;
+            setState(() { _settings.activeVoicePath = path; _settings.save(); });
+            // Restart engine if running so new voice takes effect
+            if (changed && _engineRunning) {
+              _interpreterKey.currentState?.restartWithNewVoice();
+            }
+          },
         );
       case NavSection.settings:
         return SettingsScreen(
