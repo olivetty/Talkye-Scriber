@@ -21,6 +21,66 @@ fi
 echo "[setup] Syncing base dependencies..."
 "$PIP" install -q -r "$SIDECAR_DIR/requirements-base.txt" 2>&1 | grep -v "already satisfied" || true
 
+# ── Install chatterbox-tts (optional, GPU-only) ──
+# Only install if user has opted in via settings.json ttsBackend=chatterbox
+# or if INSTALL_CHATTERBOX=1 is set explicitly.
+
+SETTINGS_FILE="$HOME/.config/talkye/settings.json"
+WANTS_CHATTERBOX=0
+
+if [ "${INSTALL_CHATTERBOX:-0}" = "1" ]; then
+    WANTS_CHATTERBOX=1
+elif [ -f "$SETTINGS_FILE" ]; then
+    # Check if ttsBackend is set to chatterbox in settings
+    if grep -q '"ttsBackend".*"chatterbox"' "$SETTINGS_FILE" 2>/dev/null; then
+        WANTS_CHATTERBOX=1
+    fi
+fi
+
+if [ "$WANTS_CHATTERBOX" = "1" ]; then
+    if "$PYTHON" -c "import chatterbox" 2>/dev/null; then
+        echo "[setup] chatterbox-tts already installed"
+    else
+        echo "[setup] Installing chatterbox-tts (GPU TTS)..."
+
+        # Detect GPU type for correct PyTorch
+        HAS_CUDA=0
+        HAS_ROCM=0
+        HAS_MPS=0
+
+        if command -v nvidia-smi &>/dev/null; then
+            HAS_CUDA=1
+        fi
+        if [ -d "/opt/rocm" ]; then
+            HAS_ROCM=1
+        fi
+        # MPS is macOS-only, detected at runtime by PyTorch
+
+        if [ "$HAS_CUDA" = "1" ]; then
+            echo "[setup] Installing PyTorch + Chatterbox (CUDA)..."
+            "$PIP" install -q torch torchaudio --index-url https://download.pytorch.org/whl/cu124 2>&1 | tail -3 || true
+        elif [ "$HAS_ROCM" = "1" ]; then
+            echo "[setup] Installing PyTorch + Chatterbox (ROCm)..."
+            "$PIP" install -q torch torchaudio --index-url https://download.pytorch.org/whl/rocm6.2 2>&1 | tail -3 || true
+        elif [ "$(uname)" = "Darwin" ]; then
+            echo "[setup] Installing PyTorch + Chatterbox (macOS MPS)..."
+            "$PIP" install -q torch torchaudio 2>&1 | tail -3 || true
+        else
+            echo "[setup] No GPU detected — skipping Chatterbox (requires GPU)"
+            WANTS_CHATTERBOX=0
+        fi
+
+        if [ "$WANTS_CHATTERBOX" = "1" ]; then
+            "$PIP" install -q chatterbox-tts 2>&1 | tail -3 || true
+            if "$PYTHON" -c "import chatterbox" 2>/dev/null; then
+                echo "[setup] chatterbox-tts installed OK"
+            else
+                echo "[setup] chatterbox-tts installation failed"
+            fi
+        fi
+    fi
+fi
+
 # ── Install llama-cpp-python with CUDA ──
 if "$PYTHON" -c "import llama_cpp" 2>/dev/null; then
     echo "[setup] llama-cpp-python already installed"

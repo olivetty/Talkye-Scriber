@@ -53,6 +53,7 @@ class AppSettings {
   String inputMode; // ptt | vad
   String dictateSttBackend; // groq | local (whisper.cpp)
   bool dictateTranslate; // translate to English via whisper.cpp
+  String ttsBackend; // pocket | chatterbox
   String wakePhrase; // wake phrase for VAD (user-trained)
   int vadTimeout; // seconds of silence → standby
   bool autoEnter; // press Enter when VAD session ends
@@ -67,6 +68,7 @@ class AppSettings {
     this.inputMode = 'ptt',
     this.dictateSttBackend = 'local',
     this.dictateTranslate = false,
+    this.ttsBackend = 'pocket',
     this.wakePhrase = 'hey mira',
     this.vadTimeout = 8,
     this.autoEnter = true,
@@ -92,6 +94,7 @@ class AppSettings {
           inputMode: map['inputMode'] as String? ?? 'ptt',
           dictateSttBackend: map['dictateSttBackend'] as String? ?? 'groq',
           dictateTranslate: map['dictateTranslate'] as bool? ?? false,
+          ttsBackend: map['ttsBackend'] as String? ?? 'pocket',
           wakePhrase: map['wakePhrase'] as String? ?? 'hey mira',
           vadTimeout: map['vadTimeout'] as int? ?? 8,
           autoEnter: map['autoEnter'] as bool? ?? true,
@@ -115,6 +118,7 @@ class AppSettings {
         'inputMode': inputMode,
         'dictateSttBackend': dictateSttBackend,
         'dictateTranslate': dictateTranslate,
+        'ttsBackend': ttsBackend,
         'wakePhrase': wakePhrase,
         'vadTimeout': vadTimeout,
         'autoEnter': autoEnter,
@@ -400,6 +404,7 @@ class _AppShellState extends State<AppShell> with WindowListener {
           settings: _settings,
           onChanged: (s) => setState(() {
             _settings.sttBackend = s.sttBackend;
+            _settings.ttsBackend = s.ttsBackend;
             _settings.save();
           }),
           engineRunning: _engineRunning,

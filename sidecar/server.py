@@ -398,11 +398,64 @@ _voice_chat = None  # VoiceChat instance (singleton)
 @app.get("/voice-chat/status")
 def voice_chat_status():
     """Voice chat status."""
-    from tts import is_available as tts_ok
+    from tts import is_available as tts_ok, pocket_available, chatterbox_available, \
+        get_backend_from_settings
     return {
         "running": _voice_chat is not None and _voice_chat.running,
         "tts_available": tts_ok(),
+        "tts_backend": get_backend_from_settings(),
+        "pocket_available": pocket_available(),
+        "chatterbox_available": chatterbox_available(),
     }
+
+
+@app.get("/tts/status")
+def tts_status():
+    """TTS backends status and GPU info."""
+    from tts import pocket_available, chatterbox_available, get_backend_from_settings
+    result = {
+        "active_backend": get_backend_from_settings(),
+        "pocket": {"available": pocket_available()},
+        "chatterbox": {"installed": False, "available": False, "loaded": False, "gpu": None},
+    }
+    try:
+        from tts_chatterbox import chatterbox_tts
+        result["chatterbox"] = chatterbox_tts.status()
+    except ImportError:
+        pass
+    return result
+
+
+@app.post("/tts/install-chatterbox")
+def install_chatterbox():
+    """Trigger Chatterbox installation via setup.sh."""
+    import subprocess
+    sidecar_dir = os.path.dirname(os.path.abspath(__file__))
+    try:
+        result = subprocess.run(
+            ["bash", os.path.join(sidecar_dir, "setup.sh")],
+            capture_output=True, text=True, timeout=600,
+            env={**os.environ, "INSTALL_CHATTERBOX": "1"},
+            cwd=sidecar_dir,
+        )
+        output = result.stdout + result.stderr
+        ok = "chatterbox-tts installed OK" in output or "already installed" in output
+        return {"ok": ok, "output": output[-500:]}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/tts/load-chatterbox")
+def load_chatterbox():
+    """Load Chatterbox model into GPU memory."""
+    try:
+        from tts_chatterbox import chatterbox_tts
+        if not chatterbox_tts.available:
+            return {"ok": False, "error": "Chatterbox not available (no GPU or not installed)"}
+        ok = chatterbox_tts.load()
+        return {"ok": ok, "status": chatterbox_tts.status()}
+    except ImportError:
+        return {"ok": False, "error": "chatterbox-tts not installed"}
 
 
 @app.websocket("/voice-chat")

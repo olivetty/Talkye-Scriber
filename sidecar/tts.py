@@ -1,11 +1,13 @@
-"""Talkye Sidecar — TTS via pocket-tts Rust binary.
+"""Talkye Sidecar — TTS router.
 
-Calls core/target/release/tts_speak to generate WAV from text,
-then plays it via paplay. English-only (pocket-tts limitation).
+Routes TTS requests to the active backend:
+  - pocket-tts: Rust binary, CPU, English only (default fallback)
+  - chatterbox: Python, GPU, 23 languages, voice cloning
 
 Usage:
-    from tts import speak
-    speak("Hello world")  # blocking, plays audio
+    from tts import speak, set_backend
+    speak("Hello world")  # uses active backend
+    set_backend("chatterbox")  # switch backend
 """
 
 import json
@@ -25,6 +27,34 @@ _SETTINGS_PATH = os.path.join(
     os.getenv("HOME", "/tmp"), ".config", "talkye", "settings.json"
 )
 
+# Active TTS backend: "pocket" or "chatterbox"
+_active_backend = "pocket"
+
+
+def set_backend(backend: str):
+    """Set the active TTS backend."""
+    global _active_backend
+    if backend in ("pocket", "chatterbox"):
+        _active_backend = backend
+        logger.info("TTS backend set to: %s", backend)
+
+
+def get_backend() -> str:
+    """Get the active TTS backend name."""
+    return _active_backend
+
+
+def get_backend_from_settings() -> str:
+    """Read ttsBackend from Flutter settings."""
+    try:
+        if os.path.isfile(_SETTINGS_PATH):
+            with open(_SETTINGS_PATH) as f:
+                cfg = json.load(f)
+            return cfg.get("ttsBackend", "pocket")
+    except Exception:
+        pass
+    return "pocket"
+
 
 def _get_active_voice() -> str | None:
     """Read activeVoicePath from Flutter settings."""
@@ -42,8 +72,30 @@ def _get_active_voice() -> str | None:
 
 
 def is_available() -> bool:
-    """Check if the TTS binary exists."""
+    """Check if any TTS backend is available."""
+    if os.path.isfile(_TTS_BIN):
+        return True
+    try:
+        from tts_chatterbox import chatterbox_tts
+        if chatterbox_tts.available:
+            return True
+    except ImportError:
+        pass
+    return False
+
+
+def pocket_available() -> bool:
+    """Check if pocket-tts binary exists."""
     return os.path.isfile(_TTS_BIN)
+
+
+def chatterbox_available() -> bool:
+    """Check if Chatterbox is available (installed + GPU)."""
+    try:
+        from tts_chatterbox import chatterbox_tts
+        return chatterbox_tts.available
+    except ImportError:
+        return False
 
 
 def synthesize(text: str, output_path: str | None = None,
@@ -102,8 +154,34 @@ def synthesize(text: str, output_path: str | None = None,
         return None
 
 
-def speak(text: str, voice: str | None = None, speed: float = 1.0) -> bool:
-    """Synthesize and play text. Blocking. Returns True on success."""
+def speak(text: str, voice: str | None = None, speed: float = 1.0,
+          language_id: str = "en") -> bool:
+    """Synthesize and play text. Blocking. Returns True on success.
+
+    Routes to the active backend (pocket-tts or Chatterbox).
+    """
+    backend = get_backend_from_settings()
+
+    # Try Chatterbox if selected and available
+    if backend == "chatterbox":
+        try:
+            from tts_chatterbox import chatterbox_tts
+            if chatterbox_tts.available:
+                ok = chatterbox_tts.speak(
+                    text, language_id=language_id, voice_ref=voice,
+                )
+                if ok:
+                    return True
+                logger.warning("Chatterbox speak failed, falling back to pocket-tts")
+        except ImportError:
+            logger.warning("chatterbox-tts not installed, falling back to pocket-tts")
+
+    # Fallback: pocket-tts (CPU, English)
+    return _speak_pocket(text, voice=voice, speed=speed)
+
+
+def _speak_pocket(text: str, voice: str | None = None, speed: float = 1.0) -> bool:
+    """Speak via pocket-tts (CPU, English). Blocking."""
     meta = synthesize(text, voice=voice, speed=speed)
     if not meta:
         return False
@@ -128,12 +206,12 @@ def speak(text: str, voice: str | None = None, speed: float = 1.0) -> bool:
 
 
 def speak_async(text: str, voice: str | None = None, speed: float = 1.0,
-                on_done: callable = None):
+                language_id: str = "en", on_done: callable = None):
     """Synthesize and play in background thread."""
     import threading
 
     def _run():
-        ok = speak(text, voice=voice, speed=speed)
+        ok = speak(text, voice=voice, speed=speed, language_id=language_id)
         if on_done:
             on_done(ok)
 
