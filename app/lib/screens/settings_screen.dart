@@ -28,6 +28,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _installingChatterbox = false;
   bool _loadingChatterbox = false;
   bool _testingTts = false;
+  bool _initialLoading = true; // true until first successful status fetch
 
   @override
   void initState() {
@@ -46,13 +47,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
     // If Chatterbox is selected but not loaded yet, keep polling
     // (auto-load takes ~12s at startup)
     if (widget.settings.ttsBackend == 'chatterbox' && !_chatterboxLoaded) {
-      for (var i = 0; i < 10; i++) {
+      for (var i = 0; i < 15; i++) {
         await Future.delayed(const Duration(seconds: 2));
         if (!mounted) return;
         await _fetchTtsStatus();
-        if (_chatterboxLoaded) return;
+        if (_chatterboxLoaded) break;
       }
     }
+    if (mounted) setState(() => _initialLoading = false);
+  }
   }
 
   Future<Map<String, dynamic>?> _get(String path) async {
@@ -140,6 +143,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Show loading overlay while Chatterbox auto-loads at startup
+    if (_initialLoading && widget.settings.ttsBackend == 'chatterbox') {
+      return Center(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const SizedBox(width: 32, height: 32,
+            child: CircularProgressIndicator(strokeWidth: 2.5, color: C.accent)),
+          const SizedBox(height: 20),
+          const Text('Loading models...', style: TextStyle(fontSize: 15, color: C.text, fontWeight: FontWeight.w500)),
+          const SizedBox(height: 8),
+          Text('Chatterbox TTS · $_gpuName',
+            style: const TextStyle(fontSize: 12, color: C.textSub)),
+          const SizedBox(height: 4),
+          const Text('This takes about 15 seconds on first launch',
+            style: TextStyle(fontSize: 11, color: C.textMuted)),
+        ]),
+      );
+    }
     final locked = widget.engineRunning;
     return ListView(padding: const EdgeInsets.all(24), children: [
       Row(children: [
