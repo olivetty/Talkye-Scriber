@@ -170,6 +170,7 @@ class ChatterboxTTS:
         self._worker_proc: subprocess.Popen | None = None
         self._gpu_info: dict | None = None
         self._installed_cache: bool | None = None
+        self._loading = False
         self._lock = threading.Lock()
 
     @property
@@ -314,26 +315,33 @@ class ChatterboxTTS:
 
     def load(self) -> bool:
         """Start worker and load model into GPU. Returns True on success."""
+        if self._loading:
+            logger.info("Load already in progress, skipping duplicate request")
+            return False
         if not self.available:
             logger.warning("Chatterbox not available (installed=%s, gpu=%s)",
                            self.installed, self.gpu_info["backend"])
             return False
 
-        if not self._start_worker():
+        self._loading = True
+        try:
+            if not self._start_worker():
+                return False
+
+            # Small delay to let worker fully initialize
+            time.sleep(1)
+
+            # Ask worker to load model (may download ~1GB on first use)
+            logger.info("Requesting model load...")
+            resp = _worker_request("POST", "/load", data={}, timeout=300)
+            if resp and resp.get("ok"):
+                logger.info("Chatterbox model loaded (%.1fs)", resp.get("elapsed", 0))
+                return True
+            error = resp.get("error", "unknown") if resp else "worker unreachable"
+            logger.error("Model load failed: %s", error)
             return False
-
-        # Small delay to let worker fully initialize
-        time.sleep(1)
-
-        # Ask worker to load model (may download ~1GB on first use)
-        logger.info("Requesting model load...")
-        resp = _worker_request("POST", "/load", data={}, timeout=300)
-        if resp and resp.get("ok"):
-            logger.info("Chatterbox model loaded (%.1fs)", resp.get("elapsed", 0))
-            return True
-        error = resp.get("error", "unknown") if resp else "worker unreachable"
-        logger.error("Model load failed: %s", error)
-        return False
+        finally:
+            self._loading = False
 
     def unload(self):
         """Unload model and stop worker."""
