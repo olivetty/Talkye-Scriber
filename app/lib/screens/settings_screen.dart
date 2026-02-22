@@ -634,14 +634,54 @@ class _DebugPanelState extends State<_DebugPanel> {
     }
   });
 
+  // Memory stats (polled every 10s when expanded)
+  String _vramInfo = '';
+  String _ramInfo = '';
+  Timer? _memTimer;
+
   static const _sourceFilters = ['ALL', 'ERROR', 'WARN', 'STT', 'TTS', 'TRANSLATE', 'CAPTURE', 'SIDECAR', 'ACCUM', 'PIPELINE'];
 
   @override
   void dispose() {
     _tickSub.cancel();
+    _memTimer?.cancel();
     _scrollCtrl.dispose();
     _searchCtrl.dispose();
     super.dispose();
+  }
+
+  void _startMemPolling() {
+    _memTimer?.cancel();
+    _fetchMemory();
+    _memTimer = Timer.periodic(const Duration(seconds: 10), (_) => _fetchMemory());
+  }
+
+  void _stopMemPolling() {
+    _memTimer?.cancel();
+    _memTimer = null;
+  }
+
+  Future<void> _fetchMemory() async {
+    try {
+      final c = HttpClient()..connectionTimeout = const Duration(seconds: 2);
+      final req = await c.getUrl(Uri.parse('http://127.0.0.1:8179/tts/memory'));
+      final resp = await req.close().timeout(const Duration(seconds: 3));
+      final body = await resp.transform(utf8.decoder).join();
+      c.close();
+      final data = jsonDecode(body) as Map<String, dynamic>;
+      if (data.containsKey('error') && data['gpu'] == null) return;
+      final gpu = data['gpu'] as Map<String, dynamic>? ?? {};
+      final ram = data['ram'] as Map<String, dynamic>? ?? {};
+      if (mounted) {
+        setState(() {
+          final allocGb = gpu['vram_allocated_gb'] ?? 0;
+          final totalGb = gpu['vram_total_gb'] ?? 0;
+          final freeGb = gpu['vram_free_gb'] ?? 0;
+          _vramInfo = 'VRAM: ${allocGb}GB / ${totalGb}GB (${freeGb}GB free)';
+          _ramInfo = 'RAM: ${ram['rss_mb'] ?? 0}MB';
+        });
+      }
+    } catch (_) {}
   }
 
   List<LogEntry> get _filtered {
@@ -727,7 +767,14 @@ class _DebugPanelState extends State<_DebugPanel> {
       child: Column(mainAxisSize: MainAxisSize.min, children: [
         // Header — always visible
         GestureDetector(
-          onTap: () => setState(() => _expanded = !_expanded),
+          onTap: () {
+            setState(() => _expanded = !_expanded);
+            if (_expanded) {
+              _startMemPolling();
+            } else {
+              _stopMemPolling();
+            }
+          },
           child: MouseRegion(
             cursor: SystemMouseCursors.click,
             child: Container(
@@ -754,6 +801,22 @@ class _DebugPanelState extends State<_DebugPanel> {
         ),
         // Expanded panel
         if (_expanded) ...[
+          // Memory stats bar
+          if (_vramInfo.isNotEmpty) ...[
+            Container(height: 1, color: C.level2),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+              child: Row(children: [
+                const Icon(Icons.memory_rounded, size: 12, color: C.accent),
+                const SizedBox(width: 6),
+                Text(_vramInfo, style: const TextStyle(fontSize: 10, color: C.textSub, fontFamily: 'monospace')),
+                const SizedBox(width: 12),
+                const Icon(Icons.developer_board_rounded, size: 12, color: C.textMuted),
+                const SizedBox(width: 4),
+                Text(_ramInfo, style: const TextStyle(fontSize: 10, color: C.textSub, fontFamily: 'monospace')),
+              ]),
+            ),
+          ],
           Container(height: 1, color: C.level2),
           // Toolbar
           Padding(

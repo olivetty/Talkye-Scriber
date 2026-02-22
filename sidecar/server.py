@@ -565,6 +565,18 @@ def tts_status():
     return result
 
 
+@app.get("/tts/memory")
+def tts_memory():
+    """Proxy to Chatterbox worker /memory endpoint for VRAM/RAM stats."""
+    import urllib.request
+    try:
+        req = urllib.request.Request("http://127.0.0.1:8180/memory")
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            return json.loads(resp.read())
+    except Exception as e:
+        return {"error": str(e), "gpu": None, "ram": None}
+
+
 @app.post("/tts/install-chatterbox")
 def install_chatterbox():
     """Install Chatterbox TTS in a separate Python 3.11 venv via uv."""

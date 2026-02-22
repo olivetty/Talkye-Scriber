@@ -8,6 +8,7 @@ Usage (from venv-chatterbox):
     # or: uvicorn chatterbox_worker:app --host 127.0.0.1 --port 8180
 """
 
+import gc
 import io
 import json
 import logging
@@ -57,13 +58,37 @@ def _gpu_info() -> dict:
     """Get GPU info from torch."""
     if torch.cuda.is_available():
         name = torch.cuda.get_device_name(0)
-        vram = torch.cuda.get_device_properties(0).total_memory
-        return {"backend": "cuda", "device": "cuda", "name": name,
-                "vram_gb": round(vram / 1024**3, 1)}
+        props = torch.cuda.get_device_properties(0)
+        vram_total = props.total_memory
+        vram_alloc = torch.cuda.memory_allocated(0)
+        vram_reserved = torch.cuda.memory_reserved(0)
+        return {
+            "backend": "cuda", "device": "cuda", "name": name,
+            "vram_total_gb": round(vram_total / 1024**3, 2),
+            "vram_allocated_gb": round(vram_alloc / 1024**3, 2),
+            "vram_reserved_gb": round(vram_reserved / 1024**3, 2),
+            "vram_free_gb": round((vram_total - vram_reserved) / 1024**3, 2),
+            # Legacy field
+            "vram_gb": round(vram_total / 1024**3, 1),
+        }
     if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         return {"backend": "mps", "device": "mps", "name": "Apple Silicon (MPS)",
                 "vram_gb": 0}
     return {"backend": "cpu", "device": "cpu", "name": "CPU only", "vram_gb": 0}
+
+
+def _ram_info() -> dict:
+    """Get process RAM usage (RSS) via /proc/self/status."""
+    rss_kb = 0
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    rss_kb = int(line.split()[1])
+                    break
+    except Exception:
+        pass
+    return {"rss_mb": round(rss_kb / 1024, 1), "rss_gb": round(rss_kb / 1024**2, 2)}
 
 
 @app.get("/health")
@@ -79,6 +104,17 @@ def status():
         "warmed_up": _warmed_up,
         "gpu": _gpu_info(),
         "sample_rate": _model.sr if _model else None,
+    }
+
+
+@app.get("/memory")
+def memory():
+    """Detailed memory usage — VRAM allocated/reserved/free + process RAM."""
+    return {
+        "gpu": _gpu_info(),
+        "ram": _ram_info(),
+        "model_loaded": _model is not None,
+        "warmed_up": _warmed_up,
     }
 
 
@@ -106,8 +142,18 @@ def load_model():
 
             _model = ChatterboxMultilingualTTS.from_pretrained(device=device)
 
+            # Free any temporary CPU tensors from loading
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
             elapsed = time.perf_counter() - t0
             logger.info("Chatterbox loaded in %.1fs (sr=%d)", elapsed, _model.sr)
+            mem = _gpu_info()
+            logger.info("VRAM: %.2fGB allocated, %.2fGB reserved, %.2fGB free",
+                        mem.get("vram_allocated_gb", 0),
+                        mem.get("vram_reserved_gb", 0),
+                        mem.get("vram_free_gb", 0))
             return {"ok": True, "sr": _model.sr, "elapsed": round(elapsed, 1)}
         except Exception as e:
             logger.exception("Failed to load Chatterbox: %s", e)
@@ -125,9 +171,10 @@ def unload_model():
         if _model is not None:
             del _model
             _model = None
+            gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-            logger.info("Chatterbox unloaded")
+            logger.info("Chatterbox unloaded (VRAM freed)")
             return {"ok": True}
     return {"ok": True, "message": "Not loaded"}
 
@@ -154,9 +201,19 @@ def warmup():
         logger.info("Warming up model...")
         wav = _model.generate("Ready.", language_id="en",
                               exaggeration=0.3, cfg_weight=0.5)
+        # Explicitly free warmup output — no need to keep it
+        del wav
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         elapsed = time.perf_counter() - t0
         _warmed_up = True
-        logger.info("Warm-up done in %.1fs", elapsed)
+        mem = _gpu_info()
+        ram = _ram_info()
+        logger.info("Warm-up done in %.1fs | VRAM: %.2fGB alloc, %.2fGB free | RAM: %.1fMB",
+                     elapsed, mem.get("vram_allocated_gb", 0),
+                     mem.get("vram_free_gb", 0), ram["rss_mb"])
         return {"ok": True, "elapsed": round(elapsed, 2)}
     except Exception as e:
         logger.exception("Warm-up failed: %s", e)
@@ -198,6 +255,10 @@ def generate(req: GenerateRequest):
             os.close(fd)
 
         ta.save(out, wav_tensor.cpu(), sr, format="wav")
+
+        # Free tensor immediately after saving
+        del wav_tensor
+        gc.collect()
 
         logger.info("Generated: %.1fs audio in %.1fs (lang=%s)",
                      duration, elapsed, req.language_id)
@@ -532,6 +593,12 @@ def generate_stream(req: StreamGenerateRequest):
             "Stream done: %d chunks, %.1fs audio in %.1fs (RTF=%.2f, lang=%s)",
             chunk_count, total_audio, elapsed, rtf, req.language_id,
         )
+        # Free accumulated tokens and trigger GC
+        del all_tokens, text_tokens
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         yield f"data: {json.dumps({'done': True, 'chunks': chunk_count, 'total_audio': round(total_audio, 2), 'elapsed': round(elapsed, 2), 'rtf': round(rtf, 3)})}\n\n"
 
     return StreamingResponse(_stream(), media_type="text/event-stream")
