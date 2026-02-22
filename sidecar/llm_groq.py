@@ -14,8 +14,8 @@ import json
 import logging
 import os
 import re
-import urllib.request
-import urllib.error
+
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -60,14 +60,6 @@ def groq_available() -> bool:
     return bool(_API_KEY)
 
 
-def _strip_think_tags(text: str) -> str:
-    """Remove <think>...</think> blocks from response text."""
-    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
-    text = re.sub(r"<think>\s*", "", text)
-    text = text.replace("</think>", "")
-    return text.strip()
-
-
 def groq_chat_stream(
     user_message: str,
     model: str = "qwen/qwen3-32b",
@@ -77,10 +69,7 @@ def groq_chat_stream(
     max_tokens: int = 4096,
     temperature: float = 0.7,
 ):
-    """Streaming chat via Groq API. Yields tokens.
-
-    Uses urllib (no extra deps) with chunked transfer for SSE.
-    """
+    """Streaming chat via Groq API. Yields tokens."""
     if not _API_KEY:
         raise RuntimeError("GROQ_API_KEY not set")
 
@@ -102,105 +91,78 @@ def groq_chat_stream(
         messages.extend(history)
     messages.append({"role": "user", "content": user_message})
 
-    # Qwen3 thinking params vs normal
     if model_info["supports_thinking"] and enable_thinking:
         t, tp = 0.6, 0.95
     else:
         t, tp = temperature, 0.8
 
-    body = json.dumps({
+    payload = {
         "model": model,
         "messages": messages,
         "max_tokens": min(max_tokens, model_info["max_completion"]),
         "temperature": t,
         "top_p": tp,
         "stream": True,
-    }).encode()
+    }
 
-    req = urllib.request.Request(
+    resp = requests.post(
         _API_URL,
-        data=body,
-        method="POST",
+        json=payload,
         headers={
             "Authorization": f"Bearer {_API_KEY}",
             "Content-Type": "application/json",
         },
+        stream=True,
+        timeout=120,
     )
+
+    if resp.status_code != 200:
+        body = resp.text[:300]
+        logger.error("Groq API error %d: %s", resp.status_code, body)
+        raise RuntimeError(f"Groq API error {resp.status_code}: {body}")
 
     in_think = False
     buf = ""
 
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            leftover = ""
-            while True:
-                chunk = resp.read(4096)
-                if not chunk:
-                    break
-                text = leftover + chunk.decode("utf-8", errors="replace")
-                lines = text.split("\n")
-                leftover = lines[-1]  # may be incomplete
+    for line in resp.iter_lines(decode_unicode=True):
+        if not line or not line.startswith("data: "):
+            continue
+        payload_str = line[6:]
+        if payload_str == "[DONE]":
+            break
+        try:
+            data = json.loads(payload_str)
+            delta = data["choices"][0]["delta"]
+            token = delta.get("content", "")
+            if not token:
+                continue
 
-                for line in lines[:-1]:
-                    line = line.strip()
-                    if not line.startswith("data: "):
-                        continue
-                    payload = line[6:]
-                    if payload == "[DONE]":
-                        break
-                    try:
-                        data = json.loads(payload)
-                        delta = data["choices"][0]["delta"]
-                        token = delta.get("content", "")
-                        if not token:
-                            continue
-
-                        # Filter <think> blocks for Qwen3
-                        buf += token
-                        if not in_think and "<think>" in buf:
-                            idx = buf.index("<think>")
-                            before = buf[:idx]
-                            if before:
-                                yield before
-                            buf = buf[idx + 7:]
-                            in_think = True
-                            continue
-                        if in_think:
-                            if "</think>" in buf:
-                                idx = buf.index("</think>")
-                                buf = buf[idx + 8:]
-                                in_think = False
-                                if buf:
-                                    yield buf
-                                    buf = ""
-                            else:
-                                if len(buf) > 200:
-                                    buf = buf[-20:]
-                            continue
+            # Filter <think> blocks for Qwen3
+            buf += token
+            if not in_think and "<think>" in buf:
+                idx = buf.index("<think>")
+                before = buf[:idx]
+                if before:
+                    yield before
+                buf = buf[idx + 7:]
+                in_think = True
+                continue
+            if in_think:
+                if "</think>" in buf:
+                    idx = buf.index("</think>")
+                    buf = buf[idx + 8:]
+                    in_think = False
+                    if buf:
                         yield buf
                         buf = ""
-                    except (json.JSONDecodeError, KeyError, IndexError):
-                        continue
-
-            # Process any remaining leftover
-            if leftover.strip().startswith("data: "):
-                payload = leftover.strip()[6:]
-                if payload != "[DONE]":
-                    try:
-                        data = json.loads(payload)
-                        token = data["choices"][0]["delta"].get("content", "")
-                        if token and not in_think:
-                            yield token
-                    except Exception:
-                        pass
-
-        if buf and not in_think:
+                else:
+                    if len(buf) > 200:
+                        buf = buf[-20:]
+                continue
             yield buf
+            buf = ""
+        except (json.JSONDecodeError, KeyError, IndexError):
+            continue
 
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace")
-        logger.error("Groq API error %d: %s", e.code, body[:300])
-        raise RuntimeError(f"Groq API error {e.code}: {body[:200]}")
-    except Exception as e:
-        logger.exception("Groq stream error: %s", e)
-        raise
+    if buf and not in_think:
+        yield buf
