@@ -151,36 +151,66 @@ class AppSettings {
 }
 
 /// Global log buffer — collects engine logs for debugging.
-/// Uses a circular write index to avoid O(n) shifts.
+/// Uses a circular write index for O(1) adds. Entries carry level + source metadata.
 class LogBuffer {
-  static final List<String?> _lines = List.filled(_maxLines, null);
+  static final List<LogEntry?> _entries = List.filled(_maxLines, null);
   static const int _maxLines = 500;
   static int _writeIdx = 0;
   static int _count = 0;
+  static int _version = 0;
 
   static void add(String line) {
     final ts = DateTime.now().toIso8601String().substring(11, 23);
-    _lines[_writeIdx] = '[$ts] $line';
+    String level = 'INFO';
+    String source = '';
+
+    if (line.contains('[ERROR]') || line.startsWith('ERROR')) {
+      level = 'ERROR';
+    } else if (line.contains('[WARN]') || line.startsWith('WARN')) {
+      level = 'WARN';
+    }
+
+    final tagMatch = RegExp(r'\[([A-Z_-]+)\]').firstMatch(line);
+    if (tagMatch != null) {
+      final tag = tagMatch.group(1)!;
+      if (!{'INFO', 'WARN', 'ERROR', 'DEBUG'}.contains(tag)) {
+        source = tag;
+      }
+    }
+    if (line.startsWith('SIDECAR')) source = 'SIDECAR';
+
+    _entries[_writeIdx] = LogEntry(ts: ts, level: level, source: source, message: line);
     _writeIdx = (_writeIdx + 1) % _maxLines;
     if (_count < _maxLines) _count++;
+    _version++;
   }
 
-  static String get text {
+  static List<LogEntry> get entries {
     if (_count < _maxLines) {
-      return _lines.sublist(0, _count).whereType<String>().join('\n');
+      return _entries.sublist(0, _count).whereType<LogEntry>().toList();
     }
-    // Wrap around: oldest is at _writeIdx, newest at _writeIdx-1
-    final tail = _lines.sublist(_writeIdx).whereType<String>();
-    final head = _lines.sublist(0, _writeIdx).whereType<String>();
-    return [...tail, ...head].join('\n');
+    final tail = _entries.sublist(_writeIdx).whereType<LogEntry>().toList();
+    final head = _entries.sublist(0, _writeIdx).whereType<LogEntry>().toList();
+    return [...tail, ...head];
   }
 
+  static String get text => entries.map((e) => '[${e.ts}] ${e.message}').join('\n');
   static int get length => _count;
+  static int get version => _version;
   static void clear() {
-    _lines.fillRange(0, _maxLines, null);
+    _entries.fillRange(0, _maxLines, null);
     _writeIdx = 0;
     _count = 0;
+    _version++;
   }
+}
+
+class LogEntry {
+  final String ts;
+  final String level;
+  final String source;
+  final String message;
+  const LogEntry({required this.ts, required this.level, required this.source, required this.message});
 }
 
 class AppShell extends StatefulWidget {
