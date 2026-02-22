@@ -680,6 +680,17 @@ def load_chatterbox():
         return {"ok": False, "error": str(e)}
 
 
+@app.post("/tts/unload-chatterbox")
+def unload_chatterbox():
+    """Unload Chatterbox model and stop worker — frees VRAM + RAM."""
+    try:
+        from tts_chatterbox import chatterbox_tts
+        chatterbox_tts.unload()
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 class TtsTestRequest(BaseModel):
     text: str = "Hello, this is a test of the text to speech system."
     language_id: str = "en"

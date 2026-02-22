@@ -349,6 +349,38 @@ class _AppShellState extends State<AppShell> with WindowListener {
     }
   }
 
+  /// Unload Chatterbox model + stop worker to free VRAM/RAM.
+  Future<void> _unloadChatterbox() async {
+    LogBuffer.add('Unloading Chatterbox (switched to Pocket)...');
+    try {
+      final c = HttpClient()..connectionTimeout = const Duration(seconds: 3);
+      final req = await c.postUrl(Uri.parse('http://127.0.0.1:8179/tts/unload-chatterbox'));
+      req.headers.set('Content-Type', 'application/json');
+      req.write('{}');
+      final resp = await req.close().timeout(const Duration(seconds: 10));
+      final body = await resp.transform(utf8.decoder).join();
+      c.close();
+      LogBuffer.add('Chatterbox unloaded: $body');
+    } catch (e) {
+      LogBuffer.add('Chatterbox unload failed: $e');
+    }
+  }
+
+  /// Load Chatterbox when switching back to it from Settings.
+  Future<void> _loadChatterboxFromSettings() async {
+    LogBuffer.add('Loading Chatterbox (switched from Pocket)...');
+    try {
+      final c = HttpClient()..connectionTimeout = const Duration(seconds: 3);
+      final req = await c.postUrl(Uri.parse('http://127.0.0.1:8179/tts/load-chatterbox'));
+      req.headers.set('Content-Type', 'application/json');
+      req.write('{}');
+      await req.close().timeout(const Duration(minutes: 2));
+      c.close();
+    } catch (e) {
+      LogBuffer.add('Chatterbox load failed: $e');
+    }
+  }
+
   /// Restart sidecar process. Returns when the new instance is healthy.
   Future<void> restartSidecar() async {
     _stopSidecar();
@@ -480,9 +512,18 @@ class _AppShellState extends State<AppShell> with WindowListener {
         return SettingsScreen(
           settings: _settings,
           onChanged: (s) => setState(() {
+            final oldTts = _settings.ttsBackend;
             _settings.sttBackend = s.sttBackend;
             _settings.ttsBackend = s.ttsBackend;
             _settings.save();
+            // Unload Chatterbox when switching away from it
+            if (oldTts == 'chatterbox' && s.ttsBackend != 'chatterbox') {
+              _unloadChatterbox();
+            }
+            // Auto-load Chatterbox when switching to it
+            if (oldTts != 'chatterbox' && s.ttsBackend == 'chatterbox') {
+              _loadChatterboxFromSettings();
+            }
           }),
           engineRunning: _engineRunning,
         );
