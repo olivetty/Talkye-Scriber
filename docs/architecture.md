@@ -29,9 +29,10 @@ Downloadable app for Mac + Linux. $20/month subscription.
 │  vad.rs ─────── Silero VAD V5 neural voice activity detection   │
 │                                                                 │
 │  translate.rs ── Groq LLM translation with context window       │
-│  tts/         ── Pocket TTS voice synthesis                     │
-│    mod.rs ──── TtsBackend trait + factory                       │
+│  tts/         ── TTS backend abstraction                        │
+│    mod.rs ──── TtsBackend trait + factory (pocket | chatterbox) │
 │    pocket.rs ─ Pocket TTS (CPU, English, voice clone)           │
+│    sidecar.rs  Chatterbox sidecar (GPU, 23 langs, voice clone)  │
 │  pipeline.rs ── Orchestration: accumulator + parallel translate  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -138,9 +139,12 @@ Deliverable: works with any video call app on Linux.
 ### Phase 3: Bidirectional Translation
 - Two pipeline instances running in parallel
 - Incoming: virtual speaker monitor → STT → translate → TTS → speakers
+- Auto voice cloning of remote speaker (Chatterbox prepare_conditionals)
 - Language pair configurable per direction
+- Voice caching in Chatterbox worker for fast switching
 
-Deliverable: full duplex — both sides hear translations.
+Deliverable: full duplex — both sides hear translations in cloned voices.
+See `docs/bidirectional-interpreter.md` for detailed design.
 
 ### Phase 4: Flutter UI
 - flutter_rust_bridge FFI
@@ -159,7 +163,7 @@ Deliverable: installable desktop app.
 | Virtual devices | libpulse-binding | Programmatic PulseAudio control (Phase 2) |
 | Config format | .env (dotenvy) | Simple, proven, user edits one file |
 | Translation concurrency | 3 parallel + ordered | Reduces latency when multiple fragments queue up |
-| TTS engine | pocket-tts | CPU, English, voice clone, streaming, ~135ms first chunk |
+| TTS engine | pocket-tts + Chatterbox | Pocket: CPU, English, Rust nativ. Chatterbox: GPU, 23 langs, voice clone, streaming via Python sidecar |
 | STT (production) | parakeet-rs (Parakeet TDT v3) | Local, 25 EU langs, 600M params, ONNX, $0 |
 | VAD | Silero VAD V5 (ONNX) | Neural speech detection, 2.2MB, ~1ms/chunk |
 | STT (dev/testing) | Deepgram Nova-3 | Best streaming quality, good for comparison |
@@ -191,8 +195,9 @@ See `docs/local-stt-research.md` for full research.
 | `stt/parakeet.rs` | Local STT via parakeet-rs + Silero VAD | config, vad |
 | `vad.rs` | Silero VAD V5 neural voice activity detection | config |
 | `translate.rs` | Groq API: translate text with context window | config |
-| `tts/mod.rs` | TTS backend trait + factory | config |
+| `tts/mod.rs` | TTS backend trait + factory (pocket \| chatterbox) | config |
 | `tts/pocket.rs` | Pocket TTS: CPU, English, streaming | config |
+| `tts/sidecar.rs` | Chatterbox via HTTP SSE (GPU, 23 langs, voice clone) | config |
 | `pipeline.rs` | Wire everything: accumulator + parallel translate | all above |
 
 ## Prototype Mapping

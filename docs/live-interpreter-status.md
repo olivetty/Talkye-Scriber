@@ -16,6 +16,14 @@ Interpretare live in timp real, ca un translator uman la conferinta.
 - Length guard anti-hallucinare (reject >3x word count)
 - Traducere paralela (3 concurrent, ordered output via BTreeMap)
 - pocket-tts v0.6 (voice cloning, streaming, CPU-only, English model)
+- Chatterbox Multilingual TTS (GPU, 23 limbi, voice cloning, streaming via Python sidecar)
+  - SidecarTts backend (core/src/tts/sidecar.rs) → HTTP SSE → chatterbox_worker.py (port 8180)
+  - Streaming: token-by-token T3 generation, PCM float32 chunks via SSE
+  - Voice cloning: zero-shot din WAV (prepare_conditionals, ~1-2s pe GPU)
+  - Limbi: ar, da, de, el, en, es, fi, fr, he, hi, it, ja, ko, ms, nl, no, pl, pt, ru, sv, sw, tr, zh
+  - Rulează în venv-chatterbox (Python 3.11) separat de sidecar-ul principal
+- TTS backend selectabil din UI: Pocket (CPU) sau Chatterbox (GPU)
+- Target language dropdown re-activat cu toate cele 23 limbi Chatterbox
 - Pre-computed voice states (.wav → .safetensors, load 720ms vs 15s)
 - Session-reuse playback (un cpal stream per utterance, gapless)
 - Dynamic drain timeout (bazat pe buffer size real)
@@ -279,7 +287,7 @@ voice_profiles.json:
 
 | Limitare | Impact | Solutie posibila |
 |---|---|---|
-| pocket-tts e English-only | Nu poti genera TTS in franceza/germana | Asteptam model multilingv sau alt TTS engine |
+| pocket-tts e English-only | Nu poti genera TTS in franceza/germana | ✅ REZOLVAT: Chatterbox Multilingual (23 limbi) |
 | Voice clone suna ~80% ca tine | Expectatii | Documentam clar: "sounds similar, not identical" |
 | Parakeet TDT model e 2.4GB | Download lung la prima rulare | Progress bar, resume, download in background |
 | Latenta totala ~3-5s | Perceptibila | Fast first flush ajuta, dar e limita fizica |
@@ -319,6 +327,28 @@ voice_profiles.json:
 3. BlackHole integration
 4. Auto-update mechanism
 
+
+## Relatie cu Mode 2 (Meeting Assistant)
+
+## Următorul pas major: Interpretare bidirecțională
+
+Design complet documentat în `docs/bidirectional-interpreter.md`.
+
+### Rezumat:
+- Două pipeline-uri independente (outgoing + incoming)
+- Outgoing: Chatterbox TTS cu vocea ta clonată (pre-înregistrată)
+- Incoming: Chatterbox TTS cu vocea celuilalt (auto-clonată din call)
+- Audio routing via PulseAudio/PipeWire virtual sinks (deja implementat)
+- Auto voice enrollment: captează audio remote speaker → WAV → prepare_conditionals
+- Experiență: primele ~15-20s voce generică, apoi vocea lor clonată
+- Cerință: utilizatorul trebuie să folosească căști (previne feedback loop)
+
+### Faze implementare:
+- Faza A: Bidirecțional de bază (voce generică pe incoming)
+- Faza B: Auto voice cloning din call
+- Faza C: Optimizare (voice caching, predictive loading)
+
+---
 
 ## Relatie cu Mode 2 (Meeting Assistant)
 
