@@ -298,6 +298,13 @@ class VoiceChat:
             logger.error("LLM failed: %s", e)
             response_text = "Sorry, I had an error."
 
+        # Strip any leaked <think> tags before TTS
+        import re
+        response_text = re.sub(r"<think>.*?</think>", "", response_text, flags=re.DOTALL)
+        response_text = re.sub(r"</?think>", "", response_text).strip()
+        if not response_text:
+            response_text = "I didn't catch that."
+
         logger.info("Voice chat assistant: %s", response_text)
         self._emit({"type": "assistant_text", "text": response_text, "done": True})
         self._history.append({"role": "assistant", "content": response_text})

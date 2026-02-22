@@ -209,23 +209,49 @@ class LocalLLM:
         )
 
         in_think_block = False
+        buffer = ""
         for chunk in stream:
             delta = chunk["choices"][0]["delta"]
             token = delta.get("content", "")
             if not token:
                 continue
 
+            buffer += token
+
             # Filter out <think>...</think> blocks from stream
-            if "<think>" in token:
+            if not in_think_block and "<think>" in buffer:
+                # Yield anything before <think>
+                idx = buffer.index("<think>")
+                before = buffer[:idx]
+                if before:
+                    yield before
+                buffer = buffer[idx + 7:]  # skip <think>
                 in_think_block = True
                 continue
-            if "</think>" in token:
-                in_think_block = False
-                continue
+
             if in_think_block:
+                if "</think>" in buffer:
+                    # End of think block — resume yielding
+                    idx = buffer.index("</think>")
+                    buffer = buffer[idx + 8:]  # skip </think>
+                    in_think_block = False
+                    if buffer:
+                        yield buffer
+                        buffer = ""
+                else:
+                    # Still in think block — discard but keep buffer
+                    # (in case </think> spans across chunks)
+                    if len(buffer) > 200:
+                        buffer = buffer[-20:]  # keep tail for tag detection
                 continue
 
-            yield token
+            # Normal token — yield immediately
+            yield buffer
+            buffer = ""
+
+        # Yield any remaining buffer
+        if buffer and not in_think_block:
+            yield buffer
 
     def _build_messages(
         self,
@@ -258,9 +284,15 @@ class LocalLLM:
 
 
 def _strip_think_tags(text: str) -> str:
-    """Remove <think>...</think> blocks from response text."""
+    """Remove <think>...</think> blocks and bare <think> tags from response text."""
     import re
-    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    # Remove complete <think>...</think> blocks
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    # Remove bare <think> tag (no closing tag — model sometimes does this)
+    text = re.sub(r"<think>\s*", "", text)
+    # Remove any remaining </think>
+    text = text.replace("</think>", "")
+    return text.strip()
 
 
 def download_model(progress_callback=None) -> bool:
