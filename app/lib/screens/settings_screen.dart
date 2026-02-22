@@ -92,8 +92,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final req = await c.postUrl(Uri.parse('$_baseUrl/tts/load-chatterbox'));
       req.headers.set('Content-Type', 'application/json');
       req.write('{}');
-      await req.close().timeout(const Duration(minutes: 5));
+      final resp = await req.close().timeout(const Duration(minutes: 5));
+      final body = await resp.transform(utf8.decoder).join();
       c.close();
+      // Parse response to get immediate loaded state
+      try {
+        final result = jsonDecode(body) as Map<String, dynamic>;
+        final st = result['status'] as Map<String, dynamic>?;
+        if (result['ok'] == true && st != null && mounted) {
+          setState(() {
+            _chatterboxLoaded = st['loaded'] as bool? ?? false;
+            _chatterboxAvailable = st['available'] as bool? ?? false;
+          });
+        }
+      } catch (_) {}
+      // Also refresh full status
       await _fetchTtsStatus();
     } catch (_) {}
     if (mounted) setState(() => _loadingChatterbox = false);
