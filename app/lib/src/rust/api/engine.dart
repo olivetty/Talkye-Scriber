@@ -59,6 +59,9 @@ Future<String> recordVoice({
 Future<String> precomputeVoice({required String wavPath}) =>
     RustLib.instance.api.crateApiEnginePrecomputeVoice(wavPath: wavPath);
 
+Future<String> prepareCbxVoice({required String wavPath}) =>
+    RustLib.instance.api.crateApiEnginePrepareCbxVoice(wavPath: wavPath);
+
 /// Preview a voice — generates TTS, saves preview WAV, plays it. Returns preview path.
 Future<String> previewVoice({required String voicePath}) =>
     RustLib.instance.api.crateApiEnginePreviewVoice(voicePath: voicePath);

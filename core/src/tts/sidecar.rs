@@ -50,28 +50,46 @@ fn lang_to_iso(lang: &str) -> &str {
 
 /// Resolve voice path to a .wav file for Chatterbox.
 /// Pocket TTS uses .safetensors, but Chatterbox needs the original .wav.
-/// Looks for a .wav file in the same directory.
+/// Prefers optimized `_cbx.wav` (normalized, trimmed) over raw `.wav`.
 fn resolve_voice_wav(voice_path: &str) -> Option<String> {
     if voice_path.is_empty() {
         return None;
     }
     let path = std::path::Path::new(voice_path);
+    let dir = path.parent()?;
+    let stem = path.file_stem()?.to_str()?;
 
-    // Already a .wav file
+    // 1. Check for Chatterbox-optimized WAV first
+    let cbx_wav = dir.join(format!("{stem}_cbx.wav"));
+    if cbx_wav.exists() {
+        let s = cbx_wav.to_string_lossy().to_string();
+        tracing::info!("[TTS-SIDECAR] using optimized voice: {s}");
+        return Some(s);
+    }
+
+    // 2. Already a .wav file (non-cbx)
     if voice_path.ends_with(".wav") && path.exists() {
         return Some(voice_path.to_string());
     }
 
-    // For .safetensors, look for .wav in same directory
-    if let Some(dir) = path.parent() {
-        if dir.exists() {
-            if let Ok(entries) = std::fs::read_dir(dir) {
-                for entry in entries.flatten() {
-                    let p = entry.path();
-                    if p.extension().and_then(|e| e.to_str()) == Some("wav") {
-                        let wav = p.to_string_lossy().to_string();
-                        tracing::info!("[TTS-SIDECAR] resolved voice: {voice_path} → {wav}");
-                        return Some(wav);
+    // 3. For .safetensors, look for _cbx.wav or .wav in same directory
+    if dir.exists() {
+        // Try stem.wav
+        let raw_wav = dir.join(format!("{stem}.wav"));
+        if raw_wav.exists() {
+            let s = raw_wav.to_string_lossy().to_string();
+            tracing::info!("[TTS-SIDECAR] using raw voice: {s}");
+            return Some(s);
+        }
+        // Fallback: any .wav in directory
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
+                    if ext == "wav" && !p.to_string_lossy().ends_with("_preview.wav") {
+                        let s = p.to_string_lossy().to_string();
+                        tracing::info!("[TTS-SIDECAR] resolved voice fallback: {voice_path} → {s}");
+                        return Some(s);
                     }
                 }
             }

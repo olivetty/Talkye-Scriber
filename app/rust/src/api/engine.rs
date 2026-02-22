@@ -363,6 +363,14 @@ pub fn precompute_voice(wav_path: String) -> String {
     }
 }
 
+pub fn prepare_cbx_voice(wav_path: String) -> String {
+    match talkye_core::voice::prepare_cbx_voice(&wav_path) {
+        Ok(path) => path,
+        Err(e) => format!("ERROR: {e:#}"),
+    }
+}
+
+
 /// Preview a voice — generates TTS, saves preview WAV, plays it. Returns preview path.
 pub fn preview_voice(voice_path: String) -> String {
     match talkye_core::voice::preview_voice(&voice_path) {

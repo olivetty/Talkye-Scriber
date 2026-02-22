@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:lottie/lottie.dart';
 import '../theme.dart';
+import '../main.dart';
 import '../src/rust/api/engine.dart';
 
 // Processing status messages — cycles through these for a techy feel
@@ -118,7 +119,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
       for (final v in _voices)
         Padding(padding: const EdgeInsets.only(bottom: 8), child: _voiceCard(
           name: v.name, path: v.path,
-          desc: v.isPrecomputed ? 'Cloned · Ready' : 'Raw recording',
+          desc: _voiceDesc(v),
           isBuiltin: false, isActive: _activePath == v.path,
         )),
       const SizedBox(height: 8),
@@ -131,18 +132,21 @@ class _VoiceScreenState extends State<VoiceScreen> {
     bool isBuiltin = false, bool isActive = false,
   }) {
     final isPreviewing = _previewingPath == path;
+    final hasCbx = !isBuiltin && _hasCbxVoice(path);
+    final hasPocket = !isBuiltin && (path.endsWith('.safetensors') || File(path.replaceAll(RegExp(r'\.[^.]+$'), '.safetensors')).existsSync());
     return _HoverCard(
       onTap: () => widget.onVoiceChanged(path),
       isActive: isActive,
-      child: Row(children: [
-        Container(width: 40, height: 40,
-          decoration: BoxDecoration(
-            color: (isActive ? C.accent : C.textMuted).withAlpha(20),
-            borderRadius: BorderRadius.circular(10)),
-          child: Icon(isBuiltin ? Icons.graphic_eq_rounded : Icons.record_voice_over_rounded,
-            size: 20, color: isActive ? C.accent : C.textMuted),
-        ),
-        const SizedBox(width: 14),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Container(width: 40, height: 40,
+            decoration: BoxDecoration(
+              color: (isActive ? C.accent : C.textMuted).withAlpha(20),
+              borderRadius: BorderRadius.circular(10)),
+            child: Icon(isBuiltin ? Icons.graphic_eq_rounded : Icons.record_voice_over_rounded,
+              size: 20, color: isActive ? C.accent : C.textMuted),
+          ),
+          const SizedBox(width: 14),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(name[0].toUpperCase() + name.substring(1),
             style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: C.text)),
@@ -164,6 +168,100 @@ class _VoiceScreenState extends State<VoiceScreen> {
             child: const Text('Active', style: TextStyle(fontSize: 10, color: C.success, fontWeight: FontWeight.w600)),
           ),
       ]),
+        // Engine readiness badges for custom voices
+        if (!isBuiltin) ...[
+          const SizedBox(height: 8),
+          Row(children: [
+            const SizedBox(width: 54), // align with text
+            _engineBadge('Pocket', hasPocket, Icons.memory_rounded),
+            const SizedBox(width: 6),
+            _engineBadge('Chatterbox', hasCbx, Icons.graphic_eq_rounded),
+            if (!hasCbx && _hasRawWav(path)) ...[
+              const SizedBox(width: 8),
+              _prepareBtn(path, name),
+            ],
+          ]),
+        ],
+      ]),
+    );
+  }
+
+  String _voiceDesc(FfiVoiceInfo v) {
+    final hasCbx = _hasCbxVoice(v.path);
+    final hasPocket = v.isPrecomputed;
+    if (hasPocket && hasCbx) return 'Cloned · Both engines ready';
+    if (hasPocket) return 'Cloned · Pocket ready';
+    if (hasCbx) return 'Cloned · Chatterbox ready';
+    return 'Raw recording';
+  }
+
+  bool _hasCbxVoice(String path) {
+    final stem = path.replaceAll(RegExp(r'\.[^.]+$'), '');
+    return File('${stem}_cbx.wav').existsSync();
+  }
+
+  bool _hasRawWav(String path) {
+    final stem = path.replaceAll(RegExp(r'\.[^.]+$'), '');
+    return File('$stem.wav').existsSync();
+  }
+
+  Widget _engineBadge(String label, bool ready, IconData icon) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: (ready ? C.success : C.textMuted).withAlpha(15),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(ready ? Icons.check_circle_rounded : Icons.circle_outlined,
+          size: 10, color: ready ? C.success : C.textMuted),
+        const SizedBox(width: 3),
+        Text(label, style: TextStyle(fontSize: 9, color: ready ? C.success : C.textMuted,
+          fontWeight: FontWeight.w500)),
+      ]),
+    );
+  }
+
+  bool _preparingCbx = false;
+
+  Widget _prepareBtn(String path, String name) {
+    return GestureDetector(
+      onTap: _preparingCbx ? null : () async {
+        final stem = path.replaceAll(RegExp(r'\.[^.]+$'), '');
+        final wavPath = '$stem.wav';
+        setState(() => _preparingCbx = true);
+        try {
+          final result = prepareCbxVoice(wavPath: wavPath);
+          if (result.startsWith('ERROR')) {
+            setState(() => _errorMsg = result);
+          } else {
+            LogBuffer.add('CBX voice prepared for $name: $result');
+          }
+        } catch (e) {
+          setState(() => _errorMsg = 'Prepare failed: $e');
+        }
+        if (mounted) setState(() => _preparingCbx = false);
+      },
+      child: MouseRegion(
+        cursor: _preparingCbx ? SystemMouseCursors.basic : SystemMouseCursors.click,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: C.accent.withAlpha(20),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            if (_preparingCbx)
+              const SizedBox(width: 10, height: 10,
+                child: CircularProgressIndicator(strokeWidth: 1, color: C.accent))
+            else
+              const Icon(Icons.auto_fix_high_rounded, size: 10, color: C.accent),
+            const SizedBox(width: 3),
+            Text(_preparingCbx ? 'Preparing...' : 'Optimize for Chatterbox',
+              style: const TextStyle(fontSize: 9, color: C.accent, fontWeight: FontWeight.w500)),
+          ]),
+        ),
+      ),
     );
   }
 
@@ -210,7 +308,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
   Future<void> _cleanupTemp(String tempName, int gen) async {
     final dir = voicesDir();
     final base = '$dir/$tempName';
-    for (final ext in ['.wav', '.safetensors', '_preview.wav']) {
+    for (final ext in ['.wav', '.safetensors', '_cbx.wav', '_preview.wav']) {
       try { await File('$base$ext').delete(); } catch (_) {}
     }
   }
@@ -248,6 +346,18 @@ class _VoiceScreenState extends State<VoiceScreen> {
           return;
         }
         _tempStPath = stPath;
+        // Also prepare Chatterbox-optimized voice (normalized, trimmed)
+        prepareCbxVoice(wavPath: result).then((cbxPath) {
+          if (mounted && _generation == gen) {
+            if (cbxPath.startsWith('ERROR')) {
+              LogBuffer.add('CBX voice prep warning: $cbxPath');
+            } else {
+              LogBuffer.add('CBX voice ready: $cbxPath');
+            }
+          }
+        }).catchError((e) {
+          LogBuffer.add('CBX voice prep error: $e');
+        });
         // Generate preview (TTS model already warm)
         previewVoice(voicePath: stPath).then((_) {
           if (!mounted || _generation != gen) return;
@@ -282,8 +392,8 @@ class _VoiceScreenState extends State<VoiceScreen> {
     final oldBase = '$dir/$_tempName';
     final newBase = '$dir/$name';
     try {
-      // Rename: wav, safetensors, preview
-      for (final ext in ['.wav', '.safetensors']) {
+      // Rename: wav, safetensors, cbx.wav, preview
+      for (final ext in ['.wav', '.safetensors', '_cbx.wav']) {
         final old = File('$oldBase$ext');
         if (await old.exists()) await old.rename('$newBase$ext');
       }
