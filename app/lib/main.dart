@@ -51,7 +51,6 @@ class AppSettings {
   String soundTheme; // subtle | mechanical | silent
   String inputMode; // ptt | vad
   String wakePhrase; // wake phrase for VAD (user-trained)
-  double wakewordThreshold; // 0.0-1.0
   int vadTimeout; // seconds of silence → standby
   bool autoEnter; // press Enter when VAD session ends
 
@@ -64,7 +63,6 @@ class AppSettings {
     this.soundTheme = 'subtle',
     this.inputMode = 'ptt',
     this.wakePhrase = 'hey mira',
-    this.wakewordThreshold = 0.58,
     this.vadTimeout = 8,
     this.autoEnter = true,
   });
@@ -88,7 +86,6 @@ class AppSettings {
           soundTheme: map['soundTheme'] as String? ?? 'subtle',
           inputMode: map['inputMode'] as String? ?? 'ptt',
           wakePhrase: map['wakePhrase'] as String? ?? 'hey mira',
-          wakewordThreshold: (map['wakewordThreshold'] as num?)?.toDouble() ?? 0.58,
           vadTimeout: map['vadTimeout'] as int? ?? 8,
           autoEnter: map['autoEnter'] as bool? ?? true,
         );
@@ -110,7 +107,6 @@ class AppSettings {
         'soundTheme': soundTheme,
         'inputMode': inputMode,
         'wakePhrase': wakePhrase,
-        'wakewordThreshold': wakewordThreshold,
         'vadTimeout': vadTimeout,
         'autoEnter': autoEnter,
       }));

@@ -562,8 +562,8 @@ class _DictateScreenState extends State<DictateScreen> {
 
   Widget _soundDropdown() {
     const themes = [
-      ('subtle', 'Subtle'), ('mechanical', 'Mechanical'),
-      ('alex', 'Alex'), ('emma', 'Emma'), ('sofia', 'Sofia'), ('luna', 'Luna'),
+      ('subtle', 'Subtle'),
+      ('alex', 'Alex'), ('luna', 'Luna'),
       ('silent', 'Silent'),
     ];
     return PopupMenuButton<String>(

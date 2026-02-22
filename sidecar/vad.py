@@ -212,7 +212,30 @@ def run_vad_listener():
 
                 if speech_frames >= MAX_SEGMENT_FRAMES:
                     duration = speech_frames * FRAME_MS / 1000
-                    logger.warning("VAD: segment too long (%.1fs), discarding", duration)
+                    is_active_now = time.monotonic() < config.vad_active_until
+                    if is_active_now:
+                        # Flush: transcribe what we have and keep listening
+                        logger.info("VAD: segment flush (%.1fs) — auto-split", duration)
+                        if spec_future is not None:
+                            spec_future.cancel()
+                            spec_future = None
+                            spec_buf_len = 0
+                        with open(config.RAWFILE, "wb") as f:
+                            f.write(speech_buf)
+                        try:
+                            subprocess.run(
+                                ["sox", "-r", "16000", "-e", "signed", "-b", "16",
+                                 "-c", "1", config.RAWFILE, config.AUDIOFILE],
+                                capture_output=True, timeout=5,
+                            )
+                            os.unlink(config.RAWFILE)
+                        except Exception as e:
+                            logger.error("Raw→WAV failed: %s", e)
+                        config.busy = True
+                        threading.Thread(target=transcribe_and_paste, daemon=True).start()
+                        config.set_vad_active()
+                    else:
+                        logger.warning("VAD: segment too long (%.1fs), discarding (standby)", duration)
                     state = "SILENCE"
                     speech_buf = bytearray()
                     consec_speech = 0

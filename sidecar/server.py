@@ -112,8 +112,7 @@ class DictateConfig(BaseModel):
     cleanup: Optional[bool] = None
     input_mode: Optional[str] = None  # ptt | vad
     trigger_key: Optional[str] = None
-    sound_theme: Optional[str] = None  # subtle | mechanical | silent
-    wakeword_threshold: Optional[float] = None
+    sound_theme: Optional[str] = None  # subtle | silent | alex | luna
     vad_timeout: Optional[int] = None
     auto_enter: Optional[bool] = None
 
@@ -131,7 +130,6 @@ def dictate_status():
         "input_mode": cfg.INPUT_MODE,
         "trigger_key": cfg.TRIGGER_KEY,
         "sound_theme": cfg.SOUND_THEME,
-        "wakeword_threshold": cfg.WAKEWORD_THRESHOLD,
         "vad_timeout": cfg.VAD_ACTIVE_TIMEOUT,
         "auto_enter": cfg.VAD_AUTO_ENTER,
     }
@@ -154,9 +152,6 @@ def dictate_config(cfg: DictateConfig):
     if cfg.sound_theme is not None:
         _cfg.SOUND_THEME = cfg.sound_theme
         logger.info("Sound theme changed to: %s", cfg.sound_theme)
-    if cfg.wakeword_threshold is not None:
-        _cfg.WAKEWORD_THRESHOLD = cfg.wakeword_threshold
-        logger.info("Wakeword threshold changed to: %.2f (requires restart)", cfg.wakeword_threshold)
     if cfg.vad_timeout is not None:
         _cfg.VAD_ACTIVE_TIMEOUT = cfg.vad_timeout
         logger.info("VAD timeout changed to: %ds", cfg.vad_timeout)

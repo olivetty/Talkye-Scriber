@@ -14,7 +14,7 @@ from platform_utils import user_env, notify
 logger = logging.getLogger(__name__)
 
 # Voice sound themes live in sidecar/sounds/<theme>/start.wav, stop.wav
-_VOICE_THEMES = {"alex", "emma", "sofia", "luna"}
+_VOICE_THEMES = {"alex", "luna"}
 _SIDECAR_DIR = Path(__file__).resolve().parent
 
 
@@ -26,17 +26,8 @@ def generate_sounds():
             "start":    "synth 0.12 sine 880 vol 0.8",
             "stop":     "synth 0.12 sine 440 vol 0.8",
             "done":     "synth 0.08 sine 660 vol 0.6",
-            "command":  "synth 0.08 sine 1100 pad 0 0.04 synth 0.08 sine 1100 vol 0.7",
             "error":    "synth 0.25 sine 260 vol 0.6",
             "activate": "synth 0.15 sine 660 synth 0.15 sine 990 vol 0.8",
-        },
-        "mechanical": {
-            "start":    "synth 0.06 noise vol 0.9 : synth 0.03 sine 1200 vol 0.6",
-            "stop":     "synth 0.07 noise vol 0.8 : synth 0.03 sine 800 vol 0.6",
-            "done":     "synth 0.05 noise vol 0.7",
-            "command":  "synth 0.05 noise vol 0.8 pad 0 0.04 synth 0.05 noise vol 0.8",
-            "error":    "synth 0.2 noise vol 0.7 : synth 0.12 sine 200 vol 0.5",
-            "activate": "synth 0.06 noise vol 0.9 pad 0 0.06 synth 0.06 noise vol 0.9",
         },
     }
     for theme_name, sounds in themes.items():

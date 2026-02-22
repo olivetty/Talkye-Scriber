@@ -51,7 +51,7 @@ fn cmd_spot(args: &[String]) {
         eprintln!("Usage: wakeword spot <rpw_path> [threshold]");
         std::process::exit(1);
     });
-    let threshold: f32 = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(0.58);
+    let threshold: f32 = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(0.55);
 
     if !std::path::Path::new(rpw_path).exists() {
         eprintln!("File not found: {}", rpw_path);

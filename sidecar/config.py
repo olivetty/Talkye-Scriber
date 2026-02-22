@@ -28,7 +28,7 @@ TRANSLATE_TO = os.getenv("TRANSLATE_TO", "en")
 INPUT_MODE = os.getenv("DICTATE_INPUT", "ptt").lower()
 TRIGGER_KEY = os.getenv("DICTATE_KEY", "KEY_RIGHTCTRL")
 SOUND_THEME = os.getenv("DICTATE_SOUND_THEME", "subtle")
-WAKEWORD_THRESHOLD = float(os.getenv("DICTATE_WAKEWORD_THRESHOLD", "0.58"))
+WAKEWORD_THRESHOLD = float(os.getenv("DICTATE_WAKEWORD_THRESHOLD", "0.55"))
 
 # ── Paths ──
 
@@ -134,8 +134,7 @@ def load_flutter_settings():
                 VAD_AUTO_ENTER = bool(cfg["autoEnter"])
                 logger.info("Settings: auto_enter=%s", VAD_AUTO_ENTER)
             if "wakewordThreshold" in cfg:
-                WAKEWORD_THRESHOLD = float(cfg["wakewordThreshold"])
-                logger.info("Settings: wakeword_threshold=%.2f", WAKEWORD_THRESHOLD)
+                pass  # threshold is fixed in .env, not user-configurable
             if "wakePhrase" in cfg:
                 WAKE_PHRASE = cfg["wakePhrase"].lower().strip()
                 rebuild_strip_variants()

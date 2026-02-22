@@ -33,8 +33,9 @@ def main():
     config.load_flutter_settings()
 
     logger.info("Dictate desktop client starting (%s)", config.PLATFORM)
-    logger.info("Input: %s | Mode: %s | Language: %s | Wake phrase: '%s'",
-                config.INPUT_MODE, config.core.mode, config.LANGUAGE, config.WAKE_PHRASE)
+    logger.info("Input: %s | Mode: %s | Language: %s | Wake phrase: '%s' | Threshold: %.2f",
+                config.INPUT_MODE, config.core.mode, config.LANGUAGE, config.WAKE_PHRASE,
+                config.WAKEWORD_THRESHOLD)
 
     if config.LLM_CLEANUP or config.TRANSLATE_ENABLED:
         features = []

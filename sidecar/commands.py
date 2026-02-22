@@ -4,7 +4,6 @@ import logging
 
 import config
 from platform_utils import paste_text, exec_keys, release_modifiers, notify
-from audio import play_sound
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +109,6 @@ def execute_commands(cmd_ids: list[str]) -> bool:
             continue
         if action == "CANCEL":
             notify("⛔ Cancelled")
-            play_sound("command")
             logger.info("Command: cancel")
             return True
         if callable(action):
@@ -120,7 +118,6 @@ def execute_commands(cmd_ids: list[str]) -> bool:
                 exec_keys(combo)
         logger.info("Command executed: %s → %s", cmd_id,
                      "callable" if callable(action) else action)
-        play_sound("command")
         notify(f"⚡ {cmd_id}")
         terminal = cmd_id in _TERMINAL_CMDS
     return terminal
