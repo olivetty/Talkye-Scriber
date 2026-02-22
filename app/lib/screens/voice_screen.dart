@@ -231,7 +231,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
         final wavPath = '$stem.wav';
         setState(() => _preparingCbx = true);
         try {
-          final result = prepareCbxVoice(wavPath: wavPath);
+          final result = await prepareCbxVoice(wavPath: wavPath);
           if (result.startsWith('ERROR')) {
             setState(() => _errorMsg = result);
           } else {
