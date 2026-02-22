@@ -261,6 +261,7 @@ class VoiceChat:
             hist = [m for m in self._history[-10:] if m is not self._history[-1]]
 
             response_text = ""
+            token_count = 0
             for token in local_llm.chat_stream(
                 user_message=wrapped_text,
                 system_prompt=system,
@@ -270,7 +271,24 @@ class VoiceChat:
                 enable_thinking=False,
             ):
                 response_text += token
+                token_count += 1
                 self._emit({"type": "assistant_text", "text": response_text, "done": False})
+
+            response_text = response_text.strip()
+            logger.info("Voice chat LLM: %d tokens, response='%s'", token_count, response_text[:100])
+            if not response_text:
+                # Fallback: try non-streaming
+                logger.warning("Streaming returned empty, trying non-streaming...")
+                response_text = local_llm.chat(
+                    user_message=wrapped_text,
+                    system_prompt=system,
+                    history=hist,
+                    max_tokens=256,
+                    temperature=0.7,
+                    enable_thinking=False,
+                )
+                response_text = response_text.strip()
+                logger.info("Voice chat LLM (non-stream): '%s'", response_text[:100])
 
             response_text = response_text.strip()
             if not response_text:
@@ -292,7 +310,9 @@ class VoiceChat:
         self._speaking = True
         self._emit({"type": "state", "state": "speaking"})
         try:
-            speak(response_text)
+            logger.info("Voice chat TTS: speaking '%s'", response_text[:80])
+            ok = speak(response_text)
+            logger.info("Voice chat TTS: done (ok=%s)", ok)
         except Exception as e:
             logger.error("TTS failed: %s", e)
         finally:
