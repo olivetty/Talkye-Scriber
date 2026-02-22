@@ -1,16 +1,20 @@
 """Talkye Sidecar — Chatterbox Multilingual TTS.
 
 GPU-accelerated TTS with voice cloning (23 languages).
-Falls back gracefully if no GPU or chatterbox-tts not installed.
+Runs chatterbox_worker.py in a separate Python 3.11 venv
+(chatterbox-tts requires Python 3.11).
+
+Architecture:
+    tts_chatterbox.py (main venv, Python 3.12)
+        → HTTP → chatterbox_worker.py (venv-chatterbox, Python 3.11, port 8180)
 
 Usage:
     from tts_chatterbox import chatterbox_tts
-    if chatterbox_tts.available:
-        chatterbox_tts.load()
-        chatterbox_tts.speak("Bonjour!", language_id="fr", voice_ref="ref.wav")
+    if chatterbox_tts.can_install:
+        chatterbox_tts.load()       # starts worker + loads model
+        chatterbox_tts.speak("Bonjour!", language_id="fr")
 """
 
-import io
 import json
 import logging
 import os
@@ -18,12 +22,18 @@ import subprocess
 import tempfile
 import threading
 import time
+import urllib.request
+import urllib.error
 from pathlib import Path
 
 from platform_utils import user_env
 
 logger = logging.getLogger(__name__)
 
+_SIDECAR_DIR = Path(__file__).resolve().parent
+_WORKER_SCRIPT = _SIDECAR_DIR / "chatterbox_worker.py"
+_WORKER_PYTHON = _SIDECAR_DIR / "venv-chatterbox" / "bin" / "python"
+_WORKER_URL = "http://127.0.0.1:8180"
 _SETTINGS_PATH = os.path.join(
     os.getenv("HOME", "/tmp"), ".config", "talkye", "settings.json"
 )
@@ -32,8 +42,7 @@ _SETTINGS_PATH = os.path.join(
 def detect_gpu() -> dict:
     """Detect available GPU acceleration.
 
-    Works even without PyTorch installed — uses system tools first,
-    then refines with torch if available.
+    Works without PyTorch — uses system tools (nvidia-smi, rocm-smi).
 
     Returns dict with:
         backend: "cuda" | "rocm" | "mps" | "cpu"
@@ -43,11 +52,8 @@ def detect_gpu() -> dict:
     """
     info = {"backend": "cpu", "device": "cpu", "name": "CPU only", "vram_gb": 0}
 
-    # ── System-level detection (no torch needed) ──
-
     # NVIDIA: use nvidia-smi
     try:
-        import subprocess
         result = subprocess.run(
             ["nvidia-smi", "--query-gpu=name,memory.total",
              "--format=csv,noheader,nounits"],
@@ -72,7 +78,6 @@ def detect_gpu() -> dict:
     # AMD ROCm (Linux)
     if os.path.exists("/opt/rocm"):
         try:
-            import subprocess
             result = subprocess.run(
                 ["rocm-smi", "--showproductname"],
                 capture_output=True, text=True, timeout=5,
@@ -83,7 +88,6 @@ def detect_gpu() -> dict:
                 info["name"] = "AMD GPU (ROCm)"
                 return info
         except (FileNotFoundError, Exception):
-            # ROCm dir exists but tools not found — still likely AMD GPU
             info["backend"] = "rocm"
             info["device"] = "cuda"
             info["name"] = "AMD GPU (ROCm)"
@@ -97,27 +101,6 @@ def detect_gpu() -> dict:
         info["name"] = "Apple Silicon (MPS)"
         return info
 
-    # ── Refine with torch if available ──
-    try:
-        import torch
-        if torch.cuda.is_available():
-            info["backend"] = "cuda"
-            info["device"] = "cuda"
-            try:
-                info["name"] = torch.cuda.get_device_name(0)
-                vram = torch.cuda.get_device_properties(0).total_mem
-                info["vram_gb"] = round(vram / 1024**3, 1)
-            except Exception:
-                info["name"] = "NVIDIA GPU"
-            return info
-        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            info["backend"] = "mps"
-            info["device"] = "mps"
-            info["name"] = "Apple Silicon (MPS)"
-            return info
-    except ImportError:
-        pass
-
     return info
 
 
@@ -127,21 +110,16 @@ def _get_active_voice() -> str | None:
         if os.path.isfile(_SETTINGS_PATH):
             with open(_SETTINGS_PATH) as f:
                 cfg = json.load(f)
-            # For Chatterbox, we need a .wav reference file.
-            # The activeVoicePath might be a .safetensors (pocket-tts format).
-            # We look for a .wav sibling or the original recording.
             path = cfg.get("activeVoicePath", "")
             if not path:
                 return None
-            # If it's already a .wav, use it directly
             if path.endswith(".wav") and os.path.isfile(path):
                 return path
-            # If it's a .safetensors, look for .wav in same directory
             if path.endswith(".safetensors"):
                 voice_dir = os.path.dirname(path)
-                for f in os.listdir(voice_dir) if os.path.isdir(voice_dir) else []:
-                    if f.endswith(".wav"):
-                        wav_path = os.path.join(voice_dir, f)
+                for fname in os.listdir(voice_dir) if os.path.isdir(voice_dir) else []:
+                    if fname.endswith(".wav"):
+                        wav_path = os.path.join(voice_dir, fname)
                         if os.path.isfile(wav_path):
                             return wav_path
     except Exception:
@@ -149,12 +127,47 @@ def _get_active_voice() -> str | None:
     return None
 
 
+def _worker_request(method: str, path: str, data: dict | None = None,
+                    timeout: float = 120) -> dict | None:
+    """Make HTTP request to the chatterbox worker."""
+    url = f"{_WORKER_URL}{path}"
+    last_err = None
+    # Retry up to 3 times for transient connection issues
+    for attempt in range(3):
+        try:
+            if data is not None:
+                body = json.dumps(data).encode()
+                req = urllib.request.Request(url, data=body, method=method,
+                                            headers={"Content-Type": "application/json"})
+            else:
+                req = urllib.request.Request(url, method=method)
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode())
+        except urllib.error.URLError as e:
+            last_err = e
+            if attempt < 2:
+                time.sleep(1)
+        except (ConnectionError, BrokenPipeError, OSError) as e:
+            last_err = e
+            if attempt < 2:
+                time.sleep(2)
+        except Exception as e:
+            logger.warning("Worker request %s %s failed: %s", method, path, e)
+            return None
+    if last_err:
+        logger.warning("Worker request %s %s failed after retries: %s", method, path, last_err)
+    return None
+
+
 class ChatterboxTTS:
-    """Singleton wrapper for Chatterbox Multilingual TTS."""
+    """Singleton wrapper for Chatterbox Multilingual TTS.
+
+    Manages a worker subprocess (chatterbox_worker.py) running in
+    venv-chatterbox (Python 3.11) on port 8180.
+    """
 
     def __init__(self):
-        self._model = None
-        self._loading = False
+        self._worker_proc: subprocess.Popen | None = None
         self._gpu_info: dict | None = None
         self._lock = threading.Lock()
 
@@ -172,16 +185,21 @@ class ChatterboxTTS:
 
     @property
     def installed(self) -> bool:
-        """True if chatterbox-tts package is installed."""
+        """True if venv-chatterbox exists with chatterbox-tts installed."""
+        if not _WORKER_PYTHON.is_file():
+            return False
         try:
-            import chatterbox  # noqa: F401
-            return True
-        except ImportError:
+            result = subprocess.run(
+                [str(_WORKER_PYTHON), "-c", "import chatterbox; print('ok')"],
+                capture_output=True, text=True, timeout=10,
+            )
+            return result.returncode == 0 and "ok" in result.stdout
+        except Exception:
             return False
 
     @property
     def available(self) -> bool:
-        """True if Chatterbox can be used right now (installed + GPU)."""
+        """True if Chatterbox can be used (installed + GPU)."""
         return self.installed and self.has_gpu
 
     @property
@@ -190,61 +208,110 @@ class ChatterboxTTS:
         return self.has_gpu
 
     @property
+    def worker_running(self) -> bool:
+        """True if the worker subprocess is alive."""
+        if self._worker_proc is None:
+            return False
+        return self._worker_proc.poll() is None
+
+    @property
     def loaded(self) -> bool:
-        return self._model is not None
+        """True if worker is running and model is loaded."""
+        if not self.worker_running:
+            return False
+        resp = _worker_request("GET", "/status", timeout=3)
+        return resp is not None and resp.get("loaded", False)
+
+    def _start_worker(self) -> bool:
+        """Start the chatterbox_worker.py subprocess."""
+        if self.worker_running:
+            return True
+        if not _WORKER_PYTHON.is_file() or not _WORKER_SCRIPT.is_file():
+            logger.error("Worker python or script not found")
+            return False
+
+        with self._lock:
+            if self.worker_running:
+                return True
+            try:
+                # Kill any stale process on port 8180
+                try:
+                    subprocess.run(["fuser", "-k", "8180/tcp"],
+                                   capture_output=True, timeout=3)
+                    time.sleep(0.5)
+                except Exception:
+                    pass
+
+                logger.info("Starting Chatterbox worker (port 8180)...")
+                self._worker_proc = subprocess.Popen(
+                    [str(_WORKER_PYTHON), str(_WORKER_SCRIPT)],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    cwd=str(_SIDECAR_DIR),
+                )
+                # Wait for worker to be ready
+                for _ in range(40):  # up to 20 seconds
+                    time.sleep(0.5)
+                    if self._worker_proc.poll() is not None:
+                        stderr = self._worker_proc.stderr.read().decode() if self._worker_proc.stderr else ""
+                        logger.error("Worker exited early: %s", stderr[-500:])
+                        self._worker_proc = None
+                        return False
+                    resp = _worker_request("GET", "/health", timeout=2)
+                    if resp and resp.get("status") == "ok":
+                        logger.info("Chatterbox worker started (PID %d)",
+                                    self._worker_proc.pid)
+                        return True
+                logger.error("Worker did not become ready in time")
+                self._stop_worker()
+                return False
+            except Exception as e:
+                logger.exception("Failed to start worker: %s", e)
+                self._worker_proc = None
+                return False
+
+    def _stop_worker(self):
+        """Stop the worker subprocess."""
+        if self._worker_proc is not None:
+            try:
+                self._worker_proc.terminate()
+                self._worker_proc.wait(timeout=5)
+            except Exception:
+                try:
+                    self._worker_proc.kill()
+                except Exception:
+                    pass
+            logger.info("Chatterbox worker stopped")
+            self._worker_proc = None
 
     def load(self) -> bool:
-        """Load the Chatterbox Multilingual model. Returns True on success.
-
-        Model downloads automatically on first use (~1GB).
-        """
-        if self._model is not None:
-            return True
+        """Start worker and load model into GPU. Returns True on success."""
         if not self.available:
             logger.warning("Chatterbox not available (installed=%s, gpu=%s)",
                            self.installed, self.gpu_info["backend"])
             return False
-        if self._loading:
+
+        if not self._start_worker():
             return False
 
-        with self._lock:
-            if self._model is not None:
-                return True
-            self._loading = True
-            try:
-                from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+        # Small delay to let worker fully initialize
+        time.sleep(1)
 
-                device = self.gpu_info["device"]
-                t0 = time.perf_counter()
-                logger.info("Loading Chatterbox Multilingual on %s (%s)...",
-                            device, self.gpu_info["name"])
-
-                self._model = ChatterboxMultilingualTTS.from_pretrained(device=device)
-
-                elapsed = time.perf_counter() - t0
-                logger.info("Chatterbox loaded in %.1fs (sr=%d)", elapsed, self._model.sr)
-                return True
-            except Exception as e:
-                logger.exception("Failed to load Chatterbox: %s", e)
-                self._model = None
-                return False
-            finally:
-                self._loading = False
+        # Ask worker to load model (may download ~1GB on first use)
+        logger.info("Requesting model load...")
+        resp = _worker_request("POST", "/load", data={}, timeout=300)
+        if resp and resp.get("ok"):
+            logger.info("Chatterbox model loaded (%.1fs)", resp.get("elapsed", 0))
+            return True
+        error = resp.get("error", "unknown") if resp else "worker unreachable"
+        logger.error("Model load failed: %s", error)
+        return False
 
     def unload(self):
-        """Free model from GPU memory."""
-        with self._lock:
-            if self._model is not None:
-                del self._model
-                self._model = None
-                # Free GPU cache
-                try:
-                    import torch
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                except Exception:
-                    pass
-                logger.info("Chatterbox unloaded")
+        """Unload model and stop worker."""
+        if self.worker_running:
+            _worker_request("POST", "/unload", data={}, timeout=10)
+        self._stop_worker()
+        logger.info("Chatterbox unloaded")
 
     def generate(
         self,
@@ -253,89 +320,33 @@ class ChatterboxTTS:
         voice_ref: str | None = None,
         exaggeration: float = 0.5,
         cfg_weight: float = 0.5,
-    ) -> tuple[bytes, int] | None:
+    ) -> tuple[str, int] | None:
         """Generate speech audio from text.
 
-        Args:
-            text: Text to speak.
-            language_id: ISO 639-1 language code (en, fr, de, etc.)
-            voice_ref: Path to .wav reference for voice cloning. None = default.
-            exaggeration: Emotion intensity 0.0-1.0 (0.5 = natural).
-            cfg_weight: Voice similarity 0.0-1.0 (0.5 = default, 0 = neutral accent).
-
-        Returns:
-            (wav_bytes, sample_rate) or None on failure.
+        Returns (wav_path, sample_rate) or None on failure.
         """
-        if not self.loaded and not self.load():
-            return None
+        if not self.worker_running:
+            if not self.load():
+                return None
         if not text.strip():
             return None
 
-        # Use active voice from settings if no override
         if voice_ref is None:
             voice_ref = _get_active_voice()
 
-        try:
-            import torch
-            import torchaudio as ta
+        resp = _worker_request("POST", "/generate", data={
+            "text": text,
+            "language_id": language_id,
+            "voice_ref": voice_ref,
+            "exaggeration": exaggeration,
+            "cfg_weight": cfg_weight,
+        }, timeout=120)
 
-            t0 = time.perf_counter()
-
-            kwargs = {
-                "language_id": language_id,
-                "exaggeration": exaggeration,
-                "cfg_weight": cfg_weight,
-            }
-            if voice_ref and os.path.isfile(voice_ref):
-                kwargs["audio_prompt_path"] = voice_ref
-
-            wav_tensor = self._model.generate(text, **kwargs)
-            elapsed = time.perf_counter() - t0
-
-            sr = self._model.sr
-            duration = wav_tensor.shape[-1] / sr
-            logger.info("Chatterbox generate: %.1fs for %.1fs audio (lang=%s)",
-                        elapsed, duration, language_id)
-
-            # Convert tensor to WAV bytes
-            buf = io.BytesIO()
-            ta.save(buf, wav_tensor.cpu(), sr, format="wav")
-            return buf.getvalue(), sr
-
-        except Exception as e:
-            logger.exception("Chatterbox generate failed: %s", e)
-            return None
-
-    def generate_to_file(
-        self,
-        text: str,
-        output_path: str | None = None,
-        language_id: str = "en",
-        voice_ref: str | None = None,
-        exaggeration: float = 0.5,
-        cfg_weight: float = 0.5,
-    ) -> str | None:
-        """Generate speech and save to WAV file.
-
-        Returns output file path or None on failure.
-        """
-        result = self.generate(
-            text, language_id=language_id, voice_ref=voice_ref,
-            exaggeration=exaggeration, cfg_weight=cfg_weight,
-        )
-        if result is None:
-            return None
-
-        wav_bytes, sr = result
-
-        if output_path is None:
-            fd, output_path = tempfile.mkstemp(suffix=".wav", prefix="cbx_")
-            os.close(fd)
-
-        with open(output_path, "wb") as f:
-            f.write(wav_bytes)
-
-        return output_path
+        if resp and resp.get("ok"):
+            return resp["path"], resp.get("sample_rate", 22050)
+        error = resp.get("error", "unknown") if resp else "worker unreachable"
+        logger.error("Chatterbox generate failed: %s", error)
+        return None
 
     def speak(
         self,
@@ -346,17 +357,18 @@ class ChatterboxTTS:
         cfg_weight: float = 0.5,
     ) -> bool:
         """Generate and play speech. Blocking. Returns True on success."""
-        path = self.generate_to_file(
+        result = self.generate(
             text, language_id=language_id, voice_ref=voice_ref,
             exaggeration=exaggeration, cfg_weight=cfg_weight,
         )
-        if not path:
+        if not result:
             return False
 
+        wav_path, _ = result
         try:
             env = user_env()
             subprocess.run(
-                ["paplay", path],
+                ["paplay", wav_path],
                 timeout=30, env=env,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
@@ -366,18 +378,22 @@ class ChatterboxTTS:
             return False
         finally:
             try:
-                os.unlink(path)
+                os.unlink(wav_path)
             except OSError:
                 pass
 
     def status(self) -> dict:
         """Return status info for API."""
+        worker_status = None
+        if self.worker_running:
+            worker_status = _worker_request("GET", "/status", timeout=3)
         return {
             "installed": self.installed,
-            "loaded": self.loaded,
+            "loaded": worker_status.get("loaded", False) if worker_status else False,
             "gpu": self.gpu_info,
             "available": self.available,
             "can_install": self.can_install,
+            "worker_running": self.worker_running,
         }
 
 

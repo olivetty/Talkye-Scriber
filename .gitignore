@@ -17,6 +17,7 @@ prototype/__pycache__/
 
 # Python (sidecar)
 sidecar/venv/
+sidecar/venv-chatterbox/
 sidecar/__pycache__/
 
 # Environment

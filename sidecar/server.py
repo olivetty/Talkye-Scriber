@@ -92,6 +92,17 @@ async def startup():
     logger.info("Desktop PTT thread started")
 
 
+@app.on_event("shutdown")
+async def shutdown():
+    """Stop Chatterbox worker on server shutdown."""
+    try:
+        from tts_chatterbox import chatterbox_tts
+        if chatterbox_tts.worker_running:
+            chatterbox_tts.unload()
+    except Exception:
+        pass
+
+
 # ── Health ──
 
 @app.get("/health")
@@ -428,34 +439,98 @@ def tts_status():
 
 @app.post("/tts/install-chatterbox")
 def install_chatterbox():
-    """Trigger Chatterbox installation via setup.sh."""
-    import subprocess
+    """Install Chatterbox TTS in a separate Python 3.11 venv via uv."""
+    import subprocess as sp
+    import shutil
     sidecar_dir = os.path.dirname(os.path.abspath(__file__))
+    cbx_venv = os.path.join(sidecar_dir, "venv-chatterbox")
+    cbx_python = os.path.join(cbx_venv, "bin", "python")
+
+    # Already installed?
+    if os.path.isfile(cbx_python):
+        try:
+            r = sp.run([cbx_python, "-c", "import chatterbox; print('ok')"],
+                       capture_output=True, text=True, timeout=10)
+            if r.returncode == 0 and "ok" in r.stdout:
+                return {"ok": True, "output": "chatterbox-tts already installed"}
+        except Exception:
+            pass
+
+    # Find uv
+    uv = shutil.which("uv")
+    if not uv:
+        for p in [os.path.expanduser("~/.local/bin/uv"),
+                   os.path.expanduser("~/.cargo/bin/uv")]:
+            if os.path.isfile(p):
+                uv = p
+                break
+    if not uv:
+        return {"ok": False, "error": "uv not found. Install: curl -LsSf https://astral.sh/uv/install.sh | sh"}
+
+    output_lines = []
+
+    def run(cmd, timeout=300):
+        r = sp.run(cmd, capture_output=True, text=True, timeout=timeout)
+        output_lines.append(f"$ {' '.join(cmd)}")
+        if r.stdout.strip():
+            output_lines.append(r.stdout.strip()[-200:])
+        if r.stderr.strip():
+            output_lines.append(r.stderr.strip()[-200:])
+        return r.returncode == 0
+
     try:
-        result = subprocess.run(
-            ["bash", os.path.join(sidecar_dir, "setup.sh")],
-            capture_output=True, text=True, timeout=600,
-            env={**os.environ, "INSTALL_CHATTERBOX": "1"},
-            cwd=sidecar_dir,
-        )
-        output = result.stdout + result.stderr
-        ok = "chatterbox-tts installed OK" in output or "already installed" in output
-        return {"ok": ok, "output": output[-500:]}
+        # Create venv with Python 3.11
+        if not os.path.isfile(cbx_python):
+            if not run([uv, "venv", cbx_venv, "--python", "3.11"]):
+                return {"ok": False, "error": "Failed to create Python 3.11 venv",
+                        "output": "\n".join(output_lines)}
+
+        # Detect GPU for PyTorch variant
+        from tts_chatterbox import detect_gpu
+        gpu = detect_gpu()
+
+        if gpu["backend"] == "cuda":
+            run([uv, "pip", "install", "--python", cbx_python,
+                 "torch", "torchaudio",
+                 "--index-url", "https://download.pytorch.org/whl/cu124"], timeout=600)
+        elif gpu["backend"] == "rocm":
+            run([uv, "pip", "install", "--python", cbx_python,
+                 "torch", "torchaudio",
+                 "--index-url", "https://download.pytorch.org/whl/rocm6.2"], timeout=600)
+        elif gpu["backend"] == "mps":
+            run([uv, "pip", "install", "--python", cbx_python,
+                 "torch", "torchaudio"], timeout=600)
+        else:
+            return {"ok": False, "error": "No GPU detected",
+                    "output": "\n".join(output_lines)}
+
+        # Install chatterbox-tts + server deps
+        run([uv, "pip", "install", "--python", cbx_python,
+             "chatterbox-tts", "fastapi", "uvicorn[standard]", "setuptools<81"], timeout=600)
+
+        # Verify
+        r = sp.run([cbx_python, "-c", "import chatterbox; print('ok')"],
+                   capture_output=True, text=True, timeout=10)
+        ok = r.returncode == 0 and "ok" in r.stdout
+        output_lines.append("chatterbox-tts installed OK" if ok else "verification failed")
+        return {"ok": ok, "output": "\n".join(output_lines)[-500:]}
+
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": str(e),
+                "output": "\n".join(output_lines)[-500:]}
 
 
 @app.post("/tts/load-chatterbox")
 def load_chatterbox():
-    """Load Chatterbox model into GPU memory."""
+    """Start Chatterbox worker and load model into GPU memory."""
     try:
         from tts_chatterbox import chatterbox_tts
         if not chatterbox_tts.available:
             return {"ok": False, "error": "Chatterbox not available (no GPU or not installed)"}
         ok = chatterbox_tts.load()
         return {"ok": ok, "status": chatterbox_tts.status()}
-    except ImportError:
-        return {"ok": False, "error": "chatterbox-tts not installed"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 @app.websocket("/voice-chat")

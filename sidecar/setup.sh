@@ -22,60 +22,100 @@ echo "[setup] Syncing base dependencies..."
 "$PIP" install -q -r "$SIDECAR_DIR/requirements-base.txt" 2>&1 | grep -v "already satisfied" || true
 
 # ── Install chatterbox-tts (optional, GPU-only) ──
-# Only install if user has opted in via settings.json ttsBackend=chatterbox
-# or if INSTALL_CHATTERBOX=1 is set explicitly.
+# Chatterbox requires Python 3.11 (numpy<1.26 constraint).
+# We use a SEPARATE venv (venv-chatterbox) managed by `uv`.
+# Only install if user has opted in via settings or INSTALL_CHATTERBOX=1.
 
 SETTINGS_FILE="$HOME/.config/talkye/settings.json"
+CBX_VENV="$SIDECAR_DIR/venv-chatterbox"
+CBX_PYTHON="$CBX_VENV/bin/python"
 WANTS_CHATTERBOX=0
 
 if [ "${INSTALL_CHATTERBOX:-0}" = "1" ]; then
     WANTS_CHATTERBOX=1
 elif [ -f "$SETTINGS_FILE" ]; then
-    # Check if ttsBackend is set to chatterbox in settings
     if grep -q '"ttsBackend".*"chatterbox"' "$SETTINGS_FILE" 2>/dev/null; then
         WANTS_CHATTERBOX=1
     fi
 fi
 
 if [ "$WANTS_CHATTERBOX" = "1" ]; then
-    if "$PYTHON" -c "import chatterbox" 2>/dev/null; then
+    # Check if already installed
+    if [ -f "$CBX_PYTHON" ] && "$CBX_PYTHON" -c "import chatterbox" 2>/dev/null; then
         echo "[setup] chatterbox-tts already installed"
     else
-        echo "[setup] Installing chatterbox-tts (GPU TTS)..."
+        echo "[setup] Installing chatterbox-tts (GPU TTS, Python 3.11 venv)..."
 
-        # Detect GPU type for correct PyTorch
-        HAS_CUDA=0
-        HAS_ROCM=0
-        HAS_MPS=0
-
-        if command -v nvidia-smi &>/dev/null; then
-            HAS_CUDA=1
+        # Find uv
+        UV=""
+        if command -v uv &>/dev/null; then
+            UV="uv"
+        elif [ -f "$HOME/.local/bin/uv" ]; then
+            UV="$HOME/.local/bin/uv"
+        elif [ -f "$HOME/.cargo/bin/uv" ]; then
+            UV="$HOME/.cargo/bin/uv"
         fi
-        if [ -d "/opt/rocm" ]; then
-            HAS_ROCM=1
-        fi
-        # MPS is macOS-only, detected at runtime by PyTorch
 
-        if [ "$HAS_CUDA" = "1" ]; then
-            echo "[setup] Installing PyTorch + Chatterbox (CUDA)..."
-            "$PIP" install -q torch torchaudio --index-url https://download.pytorch.org/whl/cu124 2>&1 | tail -3 || true
-        elif [ "$HAS_ROCM" = "1" ]; then
-            echo "[setup] Installing PyTorch + Chatterbox (ROCm)..."
-            "$PIP" install -q torch torchaudio --index-url https://download.pytorch.org/whl/rocm6.2 2>&1 | tail -3 || true
-        elif [ "$(uname)" = "Darwin" ]; then
-            echo "[setup] Installing PyTorch + Chatterbox (macOS MPS)..."
-            "$PIP" install -q torch torchaudio 2>&1 | tail -3 || true
+        if [ -z "$UV" ]; then
+            echo "[setup] Installing uv package manager..."
+            curl -LsSf https://astral.sh/uv/install.sh | sh 2>&1 | tail -3
+            UV="$HOME/.local/bin/uv"
+        fi
+
+        if [ ! -f "$UV" ] && ! command -v uv &>/dev/null; then
+            echo "[setup] ERROR: uv not found — cannot install Chatterbox"
         else
-            echo "[setup] No GPU detected — skipping Chatterbox (requires GPU)"
-            WANTS_CHATTERBOX=0
-        fi
+            # Create venv with Python 3.11
+            if [ ! -f "$CBX_PYTHON" ]; then
+                echo "[setup] Creating Python 3.11 venv for Chatterbox..."
+                "$UV" venv "$CBX_VENV" --python 3.11 2>&1 | tail -3
+            fi
 
-        if [ "$WANTS_CHATTERBOX" = "1" ]; then
-            "$PIP" install -q chatterbox-tts 2>&1 | tail -3 || true
-            if "$PYTHON" -c "import chatterbox" 2>/dev/null; then
-                echo "[setup] chatterbox-tts installed OK"
+            if [ -f "$CBX_PYTHON" ]; then
+                # Detect GPU type for correct PyTorch
+                HAS_CUDA=0
+                HAS_ROCM=0
+
+                if command -v nvidia-smi &>/dev/null; then
+                    HAS_CUDA=1
+                fi
+                if [ -d "/opt/rocm" ]; then
+                    HAS_ROCM=1
+                fi
+
+                if [ "$HAS_CUDA" = "1" ]; then
+                    echo "[setup] Installing PyTorch (CUDA) in chatterbox venv..."
+                    "$UV" pip install --python "$CBX_PYTHON" \
+                        torch torchaudio --index-url https://download.pytorch.org/whl/cu124 \
+                        2>&1 | tail -3 || true
+                elif [ "$HAS_ROCM" = "1" ]; then
+                    echo "[setup] Installing PyTorch (ROCm) in chatterbox venv..."
+                    "$UV" pip install --python "$CBX_PYTHON" \
+                        torch torchaudio --index-url https://download.pytorch.org/whl/rocm6.2 \
+                        2>&1 | tail -3 || true
+                elif [ "$(uname)" = "Darwin" ]; then
+                    echo "[setup] Installing PyTorch (macOS MPS) in chatterbox venv..."
+                    "$UV" pip install --python "$CBX_PYTHON" \
+                        torch torchaudio 2>&1 | tail -3 || true
+                else
+                    echo "[setup] No GPU detected — skipping Chatterbox"
+                    WANTS_CHATTERBOX=0
+                fi
+
+                if [ "$WANTS_CHATTERBOX" = "1" ]; then
+                    echo "[setup] Installing chatterbox-tts..."
+                    "$UV" pip install --python "$CBX_PYTHON" \
+                        chatterbox-tts fastapi "uvicorn[standard]" "setuptools<81" \
+                        2>&1 | tail -5 || true
+
+                    if "$CBX_PYTHON" -c "import chatterbox" 2>/dev/null; then
+                        echo "[setup] chatterbox-tts installed OK"
+                    else
+                        echo "[setup] chatterbox-tts installation failed"
+                    fi
+                fi
             else
-                echo "[setup] chatterbox-tts installation failed"
+                echo "[setup] ERROR: Failed to create Python 3.11 venv"
             fi
         fi
     fi
