@@ -121,6 +121,10 @@ def groq_chat_stream(
         logger.error("Groq API error %d: %s", resp.status_code, body)
         raise RuntimeError(f"Groq API error {resp.status_code}: {body}")
 
+    # Force UTF-8 — Groq may not set charset in Content-Type,
+    # and requests defaults to latin-1 for streaming responses
+    resp.encoding = "utf-8"
+
     in_think = False
     buf = ""
 

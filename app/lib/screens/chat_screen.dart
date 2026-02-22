@@ -58,16 +58,19 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    _fetchModels();
-    _checkLlmStatus().then((_) {
-      if (_selectedModel == 'local') {
-        if (_llmAvailable && !_llmLoaded) {
-          _loadLlm();
-        } else if (!_llmAvailable) {
-          _maybeAutoDownload();
-        }
+    _init();
+  }
+
+  Future<void> _init() async {
+    await _fetchModels();
+    await _checkLlmStatus();
+    if (_selectedModel == 'local') {
+      if (_llmAvailable && !_llmLoaded) {
+        _loadLlm();
+      } else if (!_llmAvailable) {
+        _maybeAutoDownload();
       }
-    });
+    }
   }
 
   @override
