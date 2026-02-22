@@ -22,7 +22,7 @@ import config
 from platform_utils import user_env
 from audio import find_audio_source
 from transcribe import local_transcribe
-from tts import speak, synthesize, is_available as tts_available
+from tts import speak, is_available as tts_available
 
 logger = logging.getLogger(__name__)
 

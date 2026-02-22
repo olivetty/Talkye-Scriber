@@ -31,14 +31,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void initState() {
     super.initState();
-    _fetchTtsStatus();
+    _fetchTtsStatusWithRetry();
+  }
+
+  Future<void> _fetchTtsStatusWithRetry() async {
+    // Sidecar may still be starting — retry a few times
+    for (var i = 0; i < 5; i++) {
+      await _fetchTtsStatus();
+      if (_gpuBackend != 'cpu' || _chatterboxInstalled) return;
+      await Future.delayed(const Duration(seconds: 2));
+      if (!mounted) return;
+    }
   }
 
   Future<Map<String, dynamic>?> _get(String path) async {
     try {
-      final c = HttpClient()..connectionTimeout = const Duration(seconds: 2);
+      final c = HttpClient()..connectionTimeout = const Duration(seconds: 5);
       final req = await c.getUrl(Uri.parse('$_baseUrl$path'));
-      final resp = await req.close().timeout(const Duration(seconds: 3));
+      final resp = await req.close().timeout(const Duration(seconds: 8));
       final data = await resp.transform(utf8.decoder).join();
       c.close();
       return jsonDecode(data) as Map<String, dynamic>;
