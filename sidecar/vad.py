@@ -122,18 +122,19 @@ def run_vad_listener():
     silence_frames = 0
     consec_speech = 0
     was_active = False
+    session_had_output = False  # Track if any text was actually pasted during this session
 
     from concurrent.futures import ThreadPoolExecutor, Future
     spec_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="spec")
     spec_future: Future | None = None
-    spec_buf_len = 0
 
     def _spec_transcribe(raw_audio: bytes) -> dict | None:
         import tempfile as _tf
-        raw_path = _tf.mktemp(suffix=".raw")
-        wav_path = _tf.mktemp(suffix=".wav")
+        raw_fd, raw_path = _tf.mkstemp(suffix=".raw")
+        wav_fd, wav_path = _tf.mkstemp(suffix=".wav")
+        os.close(wav_fd)
         try:
-            with open(raw_path, "wb") as f:
+            with os.fdopen(raw_fd, "wb") as f:
                 f.write(raw_audio)
             subprocess.run(
                 ["sox", "-r", "16000", "-e", "signed", "-b", "16", "-c", "1", raw_path, wav_path],
@@ -170,7 +171,7 @@ def run_vad_listener():
                 else:
                     logger.info("VAD: session ended → STANDBY")
                     play_sound("stop")
-                if config.VAD_AUTO_ENTER:
+                if config.VAD_AUTO_ENTER and session_had_output:
                     release_modifiers()
                     env = user_env()
                     prefix = xdotool_prefix()
@@ -178,6 +179,7 @@ def run_vad_listener():
                         prefix + ["xdotool", "key", "--clearmodifiers", "Return"],
                         timeout=5, env=env, capture_output=True,
                     )
+                session_had_output = False
             was_active = is_active_now
 
             if config.busy:
@@ -222,7 +224,6 @@ def run_vad_listener():
                         if spec_future is not None:
                             spec_future.cancel()
                             spec_future = None
-                            spec_buf_len = 0
                         with open(config.RAWFILE, "wb") as f:
                             f.write(speech_buf)
                         try:
@@ -235,6 +236,7 @@ def run_vad_listener():
                         except Exception as e:
                             logger.error("Raw→WAV failed: %s", e)
                         config.busy = True
+                        session_had_output = True
                         threading.Thread(target=transcribe_and_paste, daemon=True).start()
                         config.set_vad_active()
                     else:
@@ -251,7 +253,6 @@ def run_vad_listener():
                     if spec_future is not None:
                         spec_future.cancel()
                         spec_future = None
-                        spec_buf_len = 0
                     if time.monotonic() < config.vad_active_until:
                         config.set_vad_active()
                 else:
@@ -262,7 +263,6 @@ def run_vad_listener():
                     spec_trigger = threshold // 2
                     if (silence_frames == spec_trigger and spec_future is None
                             and speech_frames >= MIN_SPEECH_FRAMES and is_active_now):
-                        spec_buf_len = len(speech_buf)
                         spec_future = spec_executor.submit(_spec_transcribe, bytes(speech_buf))
 
                     if silence_frames >= threshold:
@@ -278,7 +278,6 @@ def run_vad_listener():
                                 try:
                                     result = spec_future.result(timeout=5)
                                     spec_future = None
-                                    spec_buf_len = 0
                                     if result:
                                         logger.info("VAD: speech ended (%.1fs) — speculative", duration)
                                         text = result.get("text", "").strip()
@@ -293,6 +292,7 @@ def run_vad_listener():
                                             try: os.unlink(config.RAWFILE)
                                             except OSError: pass
                                             config.busy = True
+                                            session_had_output = True
                                             threading.Thread(
                                                 target=transcribe_and_paste,
                                                 args=(result,), daemon=True,
@@ -303,7 +303,6 @@ def run_vad_listener():
                                     pass
 
                             spec_future = None
-                            spec_buf_len = 0
                             logger.info("VAD: speech ended (%.1fs) — processing", duration)
                             with open(config.RAWFILE, "wb") as f:
                                 f.write(speech_buf)
@@ -319,6 +318,7 @@ def run_vad_listener():
                                 speech_buf = bytearray()
                                 continue
                             config.busy = True
+                            session_had_output = True
                             threading.Thread(target=transcribe_and_paste, daemon=True).start()
                         elif speech_frames >= MIN_SPEECH_FRAMES:
                             logger.debug("VAD: standby, speech ignored (%.1fs)", duration)
@@ -326,7 +326,6 @@ def run_vad_listener():
                             logger.debug("VAD: too short (%.1fs), ignored", duration)
 
                         spec_future = None
-                        spec_buf_len = 0
                         speech_buf = bytearray()
 
     except KeyboardInterrupt:

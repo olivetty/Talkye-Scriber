@@ -114,6 +114,7 @@ class _DictateScreenState extends State<DictateScreen> {
           'input_mode': widget.settings.inputMode,
           'vad_timeout': widget.settings.vadTimeout,
           'auto_enter': widget.settings.autoEnter,
+          'dictate_translate': widget.settings.dictateTranslate,
         });
       }
       final s = await _get('/dictate/status');
@@ -129,6 +130,10 @@ class _DictateScreenState extends State<DictateScreen> {
           _soundTheme = s['sound_theme'] as String? ?? 'subtle';
           _vadTimeout = s['vad_timeout'] as int? ?? 8;
           _autoEnter = s['auto_enter'] as bool? ?? true;
+          final sidecarTranslate = s['dictate_translate'] as bool? ?? false;
+          if (widget.settings.dictateTranslate != sidecarTranslate) {
+            widget.settings.dictateTranslate = sidecarTranslate;
+          }
         });
       }
     } else {

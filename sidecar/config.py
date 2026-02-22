@@ -145,8 +145,6 @@ def load_flutter_settings():
             if "autoEnter" in cfg:
                 VAD_AUTO_ENTER = bool(cfg["autoEnter"])
                 logger.info("Settings: auto_enter=%s", VAD_AUTO_ENTER)
-            if "wakewordThreshold" in cfg:
-                pass  # threshold is fixed in .env, not user-configurable
             if "wakePhrase" in cfg:
                 WAKE_PHRASE = cfg["wakePhrase"].lower().strip()
                 rebuild_strip_variants()

@@ -152,9 +152,8 @@ def start_recording():
         )
 
     config.rec_start_time = time.monotonic()
-    logger.info("Recording started (PID %d)", config.rec_process.pid)
     play_sound("start")
-    time.sleep(0.3)
+    logger.info("Recording started (PID %d)", config.rec_process.pid)
 
 
 def stop_recording():
@@ -163,7 +162,7 @@ def stop_recording():
         return
 
     elapsed = time.monotonic() - config.rec_start_time
-    time.sleep(1.0)
+    time.sleep(0.2)  # Brief pause to capture trailing speech
 
     config.rec_process.send_signal(signal.SIGINT)
     try:
