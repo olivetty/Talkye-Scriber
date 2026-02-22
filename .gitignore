@@ -1,5 +1,6 @@
 # Rust
 /core/target/
+/wakeword/target/
 **/*.rs.bk
 
 # Flutter

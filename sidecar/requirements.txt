@@ -18,4 +18,3 @@ pynput>=1.7.6
 # VAD mode
 setuptools<81
 webrtcvad>=2.0.10
-openwakeword>=0.4.0

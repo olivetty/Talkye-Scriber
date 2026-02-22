@@ -113,7 +113,6 @@ class DictateConfig(BaseModel):
     input_mode: Optional[str] = None  # ptt | vad
     trigger_key: Optional[str] = None
     sound_theme: Optional[str] = None  # subtle | mechanical | silent
-    magic_word: Optional[str] = None
     wakeword_threshold: Optional[float] = None
     vad_timeout: Optional[int] = None
     auto_enter: Optional[bool] = None
@@ -122,62 +121,57 @@ class DictateConfig(BaseModel):
 @app.get("/dictate/status")
 def dictate_status():
     """Current PTT state and config."""
-    import desktop
+    import config as cfg
     return {
         "running": _desktop_running,
-        "recording": desktop.rec_process is not None,
-        "busy": desktop.busy,
-        "language": desktop.LANGUAGE,
-        "cleanup": desktop.LLM_CLEANUP,
-        "input_mode": desktop.INPUT_MODE,
-        "trigger_key": desktop.TRIGGER_KEY,
-        "magic_word": desktop.MAGIC_WORD,
-        "sound_theme": desktop.SOUND_THEME,
-        "wakeword_threshold": desktop.WAKEWORD_THRESHOLD,
-        "vad_timeout": desktop.VAD_ACTIVE_TIMEOUT,
-        "auto_enter": desktop.VAD_AUTO_ENTER,
+        "recording": cfg.rec_process is not None,
+        "busy": cfg.busy,
+        "language": cfg.LANGUAGE,
+        "cleanup": cfg.LLM_CLEANUP,
+        "input_mode": cfg.INPUT_MODE,
+        "trigger_key": cfg.TRIGGER_KEY,
+        "sound_theme": cfg.SOUND_THEME,
+        "wakeword_threshold": cfg.WAKEWORD_THRESHOLD,
+        "vad_timeout": cfg.VAD_ACTIVE_TIMEOUT,
+        "auto_enter": cfg.VAD_AUTO_ENTER,
     }
 
 
 @app.post("/dictate/config")
 def dictate_config(cfg: DictateConfig):
     """Update dictation settings at runtime."""
-    import desktop
+    import config as _cfg
     if cfg.language is not None:
-        desktop.LANGUAGE = cfg.language
+        _cfg.LANGUAGE = cfg.language
     if cfg.cleanup is not None:
-        desktop.LLM_CLEANUP = cfg.cleanup
+        _cfg.LLM_CLEANUP = cfg.cleanup
     if cfg.trigger_key is not None:
-        desktop.TRIGGER_KEY = cfg.trigger_key
+        _cfg.TRIGGER_KEY = cfg.trigger_key
         logger.info("Trigger key changed to: %s", cfg.trigger_key)
     if cfg.input_mode is not None:
-        desktop.INPUT_MODE = cfg.input_mode
+        _cfg.INPUT_MODE = cfg.input_mode
         logger.info("Input mode changed to: %s", cfg.input_mode)
     if cfg.sound_theme is not None:
-        desktop.SOUND_THEME = cfg.sound_theme
+        _cfg.SOUND_THEME = cfg.sound_theme
         logger.info("Sound theme changed to: %s", cfg.sound_theme)
-    if cfg.magic_word is not None:
-        desktop.MAGIC_WORD = cfg.magic_word.lower()
-        logger.info("Magic word changed to: %s", cfg.magic_word)
     if cfg.wakeword_threshold is not None:
-        desktop.WAKEWORD_THRESHOLD = cfg.wakeword_threshold
+        _cfg.WAKEWORD_THRESHOLD = cfg.wakeword_threshold
         logger.info("Wakeword threshold changed to: %.2f (requires restart)", cfg.wakeword_threshold)
     if cfg.vad_timeout is not None:
-        desktop.VAD_ACTIVE_TIMEOUT = cfg.vad_timeout
+        _cfg.VAD_ACTIVE_TIMEOUT = cfg.vad_timeout
         logger.info("VAD timeout changed to: %ds", cfg.vad_timeout)
     if cfg.auto_enter is not None:
-        desktop.VAD_AUTO_ENTER = cfg.auto_enter
+        _cfg.VAD_AUTO_ENTER = cfg.auto_enter
         logger.info("Auto enter changed to: %s", cfg.auto_enter)
     return {
         "ok": True,
-        "language": desktop.LANGUAGE,
-        "cleanup": desktop.LLM_CLEANUP,
-        "trigger_key": desktop.TRIGGER_KEY,
-        "input_mode": desktop.INPUT_MODE,
-        "sound_theme": desktop.SOUND_THEME,
-        "magic_word": desktop.MAGIC_WORD,
-        "vad_timeout": desktop.VAD_ACTIVE_TIMEOUT,
-        "auto_enter": desktop.VAD_AUTO_ENTER,
+        "language": _cfg.LANGUAGE,
+        "cleanup": _cfg.LLM_CLEANUP,
+        "trigger_key": _cfg.TRIGGER_KEY,
+        "input_mode": _cfg.INPUT_MODE,
+        "sound_theme": _cfg.SOUND_THEME,
+        "vad_timeout": _cfg.VAD_ACTIVE_TIMEOUT,
+        "auto_enter": _cfg.VAD_AUTO_ENTER,
     }
 
 
@@ -188,19 +182,106 @@ class PreviewRequest(BaseModel):
 @app.post("/dictate/preview-sound")
 def preview_sound(req: PreviewRequest):
     """Play start + stop sounds for a theme so the user can preview it."""
-    import desktop
+    import config as _cfg
+    from audio import play_sound
     import time as _time
     import threading
 
     def _play():
-        old = desktop.SOUND_THEME
-        desktop.SOUND_THEME = req.theme
-        desktop.play_sound("start")
+        old = _cfg.SOUND_THEME
+        _cfg.SOUND_THEME = req.theme
+        play_sound("start")
         _time.sleep(0.8)
-        desktop.play_sound("stop")
-        desktop.SOUND_THEME = old
+        play_sound("stop")
+        _cfg.SOUND_THEME = old
 
     threading.Thread(target=_play, daemon=True).start()
+    return {"ok": True}
+
+
+# ── Wake word training ──
+
+_wakeword_dir = os.path.join(os.getenv("HOME", "/tmp"), ".config", "talkye", "wakeword-samples")
+_wakeword_rpw = os.path.join(os.getenv("HOME", "/tmp"), ".config", "talkye", "wakeword.rpw")
+_wakeword_bin = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "wakeword", "target", "release", "wakeword"
+)
+
+
+class WakewordRecordRequest(BaseModel):
+    sample_index: int
+    duration: int = 3
+
+
+@app.post("/wakeword/record-sample")
+def wakeword_record_sample(req: WakewordRecordRequest):
+    """Record a single wake word sample."""
+    import subprocess
+    import config as _cfg
+    os.makedirs(_wakeword_dir, exist_ok=True)
+    output_path = os.path.join(_wakeword_dir, f"sample_{req.sample_index}.wav")
+    _cfg.training = True
+    try:
+        result = subprocess.run(
+            [_wakeword_bin, "record-sample", output_path, str(req.duration)],
+            capture_output=True, timeout=req.duration + 5, text=True,
+        )
+        if result.returncode != 0:
+            return {"ok": False, "error": result.stderr.strip()}
+        return {"ok": True, "path": output_path}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    finally:
+        _cfg.training = False
+
+
+class WakewordBuildRequest(BaseModel):
+    name: str = "hey_mira"
+
+
+@app.post("/wakeword/build")
+def wakeword_build(req: WakewordBuildRequest):
+    """Build .rpw wakeword from recorded samples."""
+    import subprocess
+    if not os.path.isdir(_wakeword_dir):
+        return {"ok": False, "error": "No samples recorded yet"}
+    samples = [f for f in os.listdir(_wakeword_dir) if f.endswith(".wav")]
+    if len(samples) < 3:
+        return {"ok": False, "error": f"Need at least 3 samples, have {len(samples)}"}
+    try:
+        result = subprocess.run(
+            [_wakeword_bin, "build", req.name, _wakeword_dir, _wakeword_rpw],
+            capture_output=True, timeout=30, text=True,
+        )
+        if result.returncode != 0:
+            return {"ok": False, "error": result.stderr.strip()}
+        return {"ok": True, "rpw_path": _wakeword_rpw, "samples": len(samples)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.get("/wakeword/status")
+def wakeword_status():
+    """Check wake word training status."""
+    samples = []
+    if os.path.isdir(_wakeword_dir):
+        samples = sorted([f for f in os.listdir(_wakeword_dir) if f.endswith(".wav")])
+    return {
+        "trained": os.path.isfile(_wakeword_rpw),
+        "rpw_path": _wakeword_rpw,
+        "samples": samples,
+        "sample_count": len(samples),
+        "binary_available": os.path.isfile(_wakeword_bin),
+    }
+
+
+@app.delete("/wakeword/samples")
+def wakeword_clear_samples():
+    """Clear all recorded wake word samples."""
+    import shutil
+    if os.path.isdir(_wakeword_dir):
+        shutil.rmtree(_wakeword_dir)
     return {"ok": True}
 
 

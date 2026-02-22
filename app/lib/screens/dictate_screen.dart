@@ -46,7 +46,6 @@ class _DictateScreenState extends State<DictateScreen> {
   String _inputMode = 'ptt';
   String _triggerKey = 'KEY_RIGHTCTRL';
   String _soundTheme = 'subtle';
-  String _magicWord = 'hey mira';
   int _vadTimeout = 8;
   bool _autoEnter = true;
   Timer? _pollTimer;
@@ -66,7 +65,6 @@ class _DictateScreenState extends State<DictateScreen> {
     _triggerKey = widget.settings.triggerKey;
     _soundTheme = widget.settings.soundTheme;
     _inputMode = widget.settings.inputMode;
-    _magicWord = widget.settings.magicWord;
     _vadTimeout = widget.settings.vadTimeout;
     _autoEnter = widget.settings.autoEnter;
     _poll();
@@ -114,7 +112,6 @@ class _DictateScreenState extends State<DictateScreen> {
           'trigger_key': widget.settings.triggerKey,
           'sound_theme': widget.settings.soundTheme,
           'input_mode': widget.settings.inputMode,
-          'magic_word': widget.settings.magicWord,
           'vad_timeout': widget.settings.vadTimeout,
           'auto_enter': widget.settings.autoEnter,
         });
@@ -130,7 +127,6 @@ class _DictateScreenState extends State<DictateScreen> {
           _inputMode = s['input_mode'] as String? ?? 'ptt';
           _triggerKey = s['trigger_key'] as String? ?? 'KEY_RIGHTCTRL';
           _soundTheme = s['sound_theme'] as String? ?? 'subtle';
-          _magicWord = s['magic_word'] as String? ?? 'hey mira';
           _vadTimeout = s['vad_timeout'] as int? ?? 8;
           _autoEnter = s['auto_enter'] as bool? ?? true;
         });
@@ -145,7 +141,6 @@ class _DictateScreenState extends State<DictateScreen> {
     if (cfg.containsKey('trigger_key')) widget.settings.triggerKey = cfg['trigger_key'] as String;
     if (cfg.containsKey('sound_theme')) widget.settings.soundTheme = cfg['sound_theme'] as String;
     if (cfg.containsKey('input_mode')) widget.settings.inputMode = cfg['input_mode'] as String;
-    if (cfg.containsKey('magic_word')) widget.settings.magicWord = cfg['magic_word'] as String;
     if (cfg.containsKey('vad_timeout')) widget.settings.vadTimeout = cfg['vad_timeout'] as int;
     if (cfg.containsKey('auto_enter')) widget.settings.autoEnter = cfg['auto_enter'] as bool;
     widget.settings.save();
@@ -209,7 +204,6 @@ class _DictateScreenState extends State<DictateScreen> {
           _commandsSection(),
         ],
       ])),
-      _footer(),
     ]);
   }
 
@@ -379,7 +373,38 @@ class _DictateScreenState extends State<DictateScreen> {
   }
 
   Widget _wakeWordsWidget() {
-    return _chip('Hey Mira');
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      _chip(widget.settings.wakePhrase.isEmpty ? 'Not set' : widget.settings.wakePhrase),
+      const SizedBox(width: 8),
+      GestureDetector(
+        onTap: _connected ? () => _showTrainWizard() : null,
+        child: MouseRegion(
+          cursor: _connected ? SystemMouseCursors.click : SystemMouseCursors.basic,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(color: C.level2, borderRadius: BorderRadius.circular(6)),
+            child: const Text('Train', style: TextStyle(fontSize: 11, color: C.accent, fontWeight: FontWeight.w500)),
+          ),
+        ),
+      ),
+    ]);
+  }
+
+  void _showTrainWizard() {
+    showDialog(
+      context: context, barrierColor: Colors.black54, useSafeArea: false,
+      builder: (_) => _WakeWordWizard(
+        currentPhrase: widget.settings.wakePhrase,
+        onComplete: (String phrase) async {
+          widget.settings.wakePhrase = phrase;
+          widget.settings.save();
+          _poll();
+          if (_inputMode == 'vad') {
+            await widget.onRestartSidecar();
+          }
+        },
+      ),
+    );
   }
 
   Widget _chip(String label) {
@@ -578,13 +603,274 @@ class _DictateScreenState extends State<DictateScreen> {
     );
   }
 
-  Widget _footer() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 6),
-      color: C.level1,
-      child: const Text('Works system-wide — in any app where you can type',
-        style: TextStyle(fontSize: 10, color: C.textSub)),
+}
+
+// ── Wake Word Training Wizard ──
+
+const _trainSteps = [
+  ('Normal voice', 'Say it naturally, like you would every day.'),
+  ('A bit louder', 'Speak up, as if calling from across the room.'),
+  ('Softly', 'Say it quietly, almost a whisper.'),
+  ('Faster', 'Say it quickly, like you\'re in a hurry.'),
+  ('Slower', 'Stretch it out, nice and slow.'),
+  ('Like a question', 'Say it with a questioning tone — rising pitch.'),
+  ('One more time', 'Your natural voice again. Last one.'),
+];
+
+class _WakeWordWizard extends StatefulWidget {
+  final String currentPhrase;
+  final Future<void> Function(String phrase) onComplete;
+  const _WakeWordWizard({required this.currentPhrase, required this.onComplete});
+  @override
+  State<_WakeWordWizard> createState() => _WakeWordWizardState();
+}
+
+class _WakeWordWizardState extends State<_WakeWordWizard> {
+  int _step = 0; // 0 = intro, 1-7 = recording steps, 8 = building, 9 = done
+  bool _recording = false;
+  bool _building = false;
+  String? _error;
+  int _countdown = 0;
+  Timer? _countdownTimer;
+  late TextEditingController _phraseCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _phraseCtrl = TextEditingController(text: widget.currentPhrase);
+    _delete('/wakeword/samples');
+  }
+
+  @override
+  void dispose() {
+    _countdownTimer?.cancel();
+    _phraseCtrl.dispose();
+    super.dispose();
+  }
+
+  String get _phrase => _phraseCtrl.text.trim();
+
+  Future<Map<String, dynamic>?> _post(String path, Map<String, dynamic> body) async {
+    try {
+      final c = HttpClient()..connectionTimeout = const Duration(seconds: 2);
+      final req = await c.postUrl(Uri.parse('$_baseUrl$path'));
+      req.headers.set('Content-Type', 'application/json');
+      req.write(jsonEncode(body));
+      final resp = await req.close().timeout(const Duration(seconds: 10));
+      final data = await resp.transform(utf8.decoder).join();
+      c.close();
+      return jsonDecode(data) as Map<String, dynamic>;
+    } catch (e) { return {'ok': false, 'error': e.toString()}; }
+  }
+
+  Future<void> _delete(String path) async {
+    try {
+      final c = HttpClient()..connectionTimeout = const Duration(seconds: 2);
+      final req = await c.deleteUrl(Uri.parse('$_baseUrl$path'));
+      await req.close().timeout(const Duration(seconds: 5));
+      c.close();
+    } catch (_) {}
+  }
+
+  Future<void> _startRecording() async {
+    setState(() { _recording = true; _countdown = 3; _error = null; });
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (_countdown > 1) {
+        setState(() => _countdown--);
+      } else {
+        t.cancel();
+        _doRecord();
+      }
+    });
+  }
+
+  Future<void> _doRecord() async {
+    setState(() => _countdown = 0);
+    final result = await _post('/wakeword/record-sample', {
+      'sample_index': _step,
+      'duration': 3,
+    });
+    if (!mounted) return;
+    if (result != null && result['ok'] == true) {
+      setState(() {
+        _recording = false;
+        _step++;
+        if (_step > _trainSteps.length) {
+          _buildWakeword();
+        }
+      });
+    } else {
+      setState(() {
+        _recording = false;
+        _error = result?['error']?.toString() ?? 'Recording failed';
+      });
+    }
+  }
+
+  Future<void> _buildWakeword() async {
+    setState(() => _building = true);
+    // Use phrase as .rpw name (spaces → underscores)
+    final name = _phrase.toLowerCase().replaceAll(' ', '_');
+    final result = await _post('/wakeword/build', {'name': name});
+    if (!mounted) return;
+    if (result != null && result['ok'] == true) {
+      setState(() { _building = false; _step = _trainSteps.length + 2; });
+      widget.onComplete(_phrase);
+    } else {
+      setState(() {
+        _building = false;
+        _error = result?['error']?.toString() ?? 'Build failed';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(child: Container(
+      width: 420, constraints: const BoxConstraints(maxHeight: 400),
+      decoration: BoxDecoration(color: C.level1, borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: _step == 0 ? _introView()
+             : _step <= _trainSteps.length ? _recordView()
+             : _building ? _buildingView()
+             : _doneView(),
+      ),
+    ));
+  }
+
+  Widget _introView() {
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      const Text('Train Your Wake Word', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: C.text)),
+      const SizedBox(height: 12),
+      const Text(
+        'You\'ll say your wake phrase 7 times with different intonations. '
+        'This creates a personalized voice print that only responds to your voice.',
+        style: TextStyle(fontSize: 12, color: C.textSub, height: 1.5),
+        textAlign: TextAlign.center,
+      ),
+      const SizedBox(height: 16),
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        decoration: BoxDecoration(color: C.level2, borderRadius: BorderRadius.circular(8)),
+        child: TextField(
+          controller: _phraseCtrl,
+          style: const TextStyle(fontSize: 14, color: C.text, fontWeight: FontWeight.w600),
+          textAlign: TextAlign.center,
+          decoration: const InputDecoration(
+            border: InputBorder.none,
+            hintText: 'Type your wake phrase...',
+            hintStyle: TextStyle(color: C.textMuted, fontWeight: FontWeight.w400),
+            isDense: true,
+            contentPadding: EdgeInsets.symmetric(vertical: 8),
+          ),
+        ),
+      ),
+      const SizedBox(height: 6),
+      const Text('2-4 words work best. Example: "Hey Mira", "OK Computer"',
+        style: TextStyle(fontSize: 10, color: C.textMuted), textAlign: TextAlign.center),
+      const SizedBox(height: 20),
+      Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+        _btn('Cancel', C.level2, C.textSub, () => Navigator.pop(context)),
+        const SizedBox(width: 12),
+        _btn('Start Training', C.accent.withAlpha(30), C.accent,
+          _phrase.length >= 2 ? () => setState(() => _step = 1) : null),
+      ]),
+    ]);
+  }
+
+  Widget _recordView() {
+    final idx = _step - 1;
+    final instruction = _trainSteps[idx];
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+        Text('Step $_step of ${_trainSteps.length}',
+          style: const TextStyle(fontSize: 11, color: C.textMuted, fontWeight: FontWeight.w500)),
+        // Progress dots
+        Row(children: List.generate(_trainSteps.length, (i) => Container(
+          width: 8, height: 8, margin: const EdgeInsets.only(left: 4),
+          decoration: BoxDecoration(shape: BoxShape.circle,
+            color: i < _step ? C.accent : (i == idx ? C.accent.withAlpha(100) : C.level3)),
+        ))),
+      ]),
+      const SizedBox(height: 20),
+      Text(instruction.$1, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: C.text)),
+      const SizedBox(height: 8),
+      Text(instruction.$2, style: const TextStyle(fontSize: 12, color: C.textSub, height: 1.4), textAlign: TextAlign.center),
+      const SizedBox(height: 12),
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(color: C.accent.withAlpha(15), borderRadius: BorderRadius.circular(8)),
+        child: Text('"$_phrase"',
+          style: const TextStyle(fontSize: 14, color: C.accent, fontWeight: FontWeight.w600)),
+      ),
+      const SizedBox(height: 24),
+      if (_countdown > 0)
+        Text('$_countdown', style: TextStyle(fontSize: 48, fontWeight: FontWeight.w700, color: C.accent.withAlpha(180)))
+      else if (_recording)
+        Column(children: [
+          SizedBox(width: 60, height: 60,
+            child: Lottie.asset('assets/vui-animation.json', animate: true)),
+          const SizedBox(height: 8),
+          const Text('Listening...', style: TextStyle(fontSize: 12, color: C.accent)),
+        ])
+      else ...[
+        if (_error != null) ...[
+          Text(_error!, style: const TextStyle(fontSize: 11, color: C.error)),
+          const SizedBox(height: 8),
+        ],
+        _btn('Record', C.accent.withAlpha(30), C.accent, _startRecording),
+      ],
+      const SizedBox(height: 16),
+      if (!_recording && _countdown == 0)
+        _btn('Cancel', C.level2, C.textSub, () => Navigator.pop(context)),
+    ]);
+  }
+
+  Widget _buildingView() {
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      SizedBox(width: 80, height: 80,
+        child: Lottie.asset('assets/vui-animation.json', animate: true)),
+      const SizedBox(height: 16),
+      const Text('Building your wake word...', style: TextStyle(fontSize: 14, color: C.text, fontWeight: FontWeight.w500)),
+      const SizedBox(height: 8),
+      const Text('Creating a personalized voice print from your recordings.',
+        style: TextStyle(fontSize: 12, color: C.textSub), textAlign: TextAlign.center),
+    ]);
+  }
+
+  Widget _doneView() {
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      Container(
+        width: 56, height: 56,
+        decoration: BoxDecoration(shape: BoxShape.circle, color: C.success.withAlpha(20)),
+        child: const Icon(Icons.check_rounded, color: C.success, size: 32),
+      ),
+      const SizedBox(height: 16),
+      const Text('Wake word trained', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: C.text)),
+      const SizedBox(height: 8),
+      const Text('Your personalized voice print is ready.\nThe sidecar will restart automatically to activate it.',
+        style: TextStyle(fontSize: 12, color: C.textSub, height: 1.5), textAlign: TextAlign.center),
+      const SizedBox(height: 20),
+      _btn('Done', C.accent.withAlpha(30), C.accent, () => Navigator.pop(context)),
+    ]);
+  }
+
+  Widget _btn(String label, Color bg, Color fg, VoidCallback? onTap) {
+    final disabled = onTap == null;
+    return GestureDetector(
+      onTap: onTap,
+      child: MouseRegion(cursor: disabled ? SystemMouseCursors.basic : SystemMouseCursors.click,
+        child: AnimatedOpacity(
+          duration: const Duration(milliseconds: 150),
+          opacity: disabled ? 0.4 : 1.0,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+            decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(10)),
+            child: Text(label, style: TextStyle(fontSize: 13, color: fg, fontWeight: FontWeight.w600)),
+          ),
+        ),
+      ),
     );
   }
 }

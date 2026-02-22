@@ -9,6 +9,7 @@ import 'package:talkye_app/src/rust/api/engine.dart';
 import 'package:talkye_app/src/rust/frb_generated.dart';
 import 'theme.dart';
 import 'sidebar.dart';
+import 'status_bar.dart';
 import 'screens/interpreter_screen.dart';
 import 'screens/voice_screen.dart';
 import 'screens/settings_screen.dart';
@@ -49,7 +50,7 @@ class AppSettings {
   String triggerKey; // evdev name, e.g. KEY_RIGHTCTRL
   String soundTheme; // subtle | mechanical | silent
   String inputMode; // ptt | vad
-  String magicWord; // wake phrase for VAD
+  String wakePhrase; // wake phrase for VAD (user-trained)
   double wakewordThreshold; // 0.0-1.0
   int vadTimeout; // seconds of silence → standby
   bool autoEnter; // press Enter when VAD session ends
@@ -62,8 +63,8 @@ class AppSettings {
     this.triggerKey = 'KEY_RIGHTCTRL',
     this.soundTheme = 'subtle',
     this.inputMode = 'ptt',
-    this.magicWord = 'hey mira',
-    this.wakewordThreshold = 0.02,
+    this.wakePhrase = 'hey mira',
+    this.wakewordThreshold = 0.58,
     this.vadTimeout = 8,
     this.autoEnter = true,
   });
@@ -86,8 +87,8 @@ class AppSettings {
           triggerKey: map['triggerKey'] as String? ?? 'KEY_RIGHTCTRL',
           soundTheme: map['soundTheme'] as String? ?? 'subtle',
           inputMode: map['inputMode'] as String? ?? 'ptt',
-          magicWord: map['magicWord'] as String? ?? 'hey mira',
-          wakewordThreshold: (map['wakewordThreshold'] as num?)?.toDouble() ?? 0.1,
+          wakePhrase: map['wakePhrase'] as String? ?? 'hey mira',
+          wakewordThreshold: (map['wakewordThreshold'] as num?)?.toDouble() ?? 0.58,
           vadTimeout: map['vadTimeout'] as int? ?? 8,
           autoEnter: map['autoEnter'] as bool? ?? true,
         );
@@ -108,7 +109,7 @@ class AppSettings {
         'triggerKey': triggerKey,
         'soundTheme': soundTheme,
         'inputMode': inputMode,
-        'magicWord': magicWord,
+        'wakePhrase': wakePhrase,
         'wakewordThreshold': wakewordThreshold,
         'vadTimeout': vadTimeout,
         'autoEnter': autoEnter,
@@ -356,7 +357,10 @@ class _AppShellState extends State<AppShell> with WindowListener {
             engineRunning: _engineRunning,
           ),
           Container(width: 1, color: C.level2),
-          Expanded(child: _buildContent()),
+          Expanded(child: Column(children: [
+            Expanded(child: _buildContent()),
+            const StatusBar(),
+          ])),
         ],
       ),
     );
