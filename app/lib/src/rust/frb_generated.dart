@@ -683,8 +683,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   FfiEngineConfig dco_decode_ffi_engine_config(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 12)
-      throw Exception('unexpected arr length: expect 12 but see ${arr.length}');
+    if (arr.length != 13)
+      throw Exception('unexpected arr length: expect 13 but see ${arr.length}');
     return FfiEngineConfig(
       sttBackend: dco_decode_String(arr[0]),
       sttLanguage: dco_decode_String(arr[1]),
@@ -692,12 +692,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       translateTo: dco_decode_String(arr[3]),
       voicePath: dco_decode_String(arr[4]),
       ttsSpeed: dco_decode_f_32(arr[5]),
-      groqApiKey: dco_decode_String(arr[6]),
-      deepgramApiKey: dco_decode_String(arr[7]),
-      hfToken: dco_decode_String(arr[8]),
-      parakeetModelDir: dco_decode_String(arr[9]),
-      vadModelPath: dco_decode_String(arr[10]),
-      audioOutput: dco_decode_String(arr[11]),
+      ttsBackend: dco_decode_String(arr[6]),
+      groqApiKey: dco_decode_String(arr[7]),
+      deepgramApiKey: dco_decode_String(arr[8]),
+      hfToken: dco_decode_String(arr[9]),
+      parakeetModelDir: dco_decode_String(arr[10]),
+      vadModelPath: dco_decode_String(arr[11]),
+      audioOutput: dco_decode_String(arr[12]),
     );
   }
 
@@ -868,6 +869,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_translateTo = sse_decode_String(deserializer);
     var var_voicePath = sse_decode_String(deserializer);
     var var_ttsSpeed = sse_decode_f_32(deserializer);
+    var var_ttsBackend = sse_decode_String(deserializer);
     var var_groqApiKey = sse_decode_String(deserializer);
     var var_deepgramApiKey = sse_decode_String(deserializer);
     var var_hfToken = sse_decode_String(deserializer);
@@ -881,6 +883,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       translateTo: var_translateTo,
       voicePath: var_voicePath,
       ttsSpeed: var_ttsSpeed,
+      ttsBackend: var_ttsBackend,
       groqApiKey: var_groqApiKey,
       deepgramApiKey: var_deepgramApiKey,
       hfToken: var_hfToken,
@@ -1109,6 +1112,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_String(self.translateTo, serializer);
     sse_encode_String(self.voicePath, serializer);
     sse_encode_f_32(self.ttsSpeed, serializer);
+    sse_encode_String(self.ttsBackend, serializer);
     sse_encode_String(self.groqApiKey, serializer);
     sse_encode_String(self.deepgramApiKey, serializer);
     sse_encode_String(self.hfToken, serializer);

@@ -36,6 +36,8 @@ pub struct TtsConfig {
     pub speed: f32,
     pub output_device: Option<String>,
     pub language: String,
+    /// TTS backend: "pocket" (CPU, English) or "chatterbox" (GPU, 23 langs via sidecar)
+    pub backend: String,
 }
 
 pub struct AudioConfig {
@@ -87,6 +89,7 @@ impl Config {
                 speed: env_parse("POCKET_SPEED", 1.0),
                 output_device: env_optional_single("AUDIO_OUTPUT"),
                 language: env_single("TRANSLATE_TO", "English"),
+                backend: env_single("TTS_BACKEND", "pocket"),
             },
             audio: AudioConfig {
                 source: env_optional_single("AUDIO_SOURCE"),

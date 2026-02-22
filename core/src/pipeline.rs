@@ -131,6 +131,7 @@ impl Pipeline {
             speed: self.config.tts.speed,
             output_device: self.config.tts.output_device.clone(),
             language: self.config.tts.language.clone(),
+            backend: self.config.tts.backend.clone(),
         };
         let tts_event_tx = self.event_tx.clone();
         std::thread::spawn(move || {

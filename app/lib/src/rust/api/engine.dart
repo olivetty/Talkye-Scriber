@@ -107,6 +107,7 @@ class FfiEngineConfig {
   final String translateTo;
   final String voicePath;
   final double ttsSpeed;
+  final String ttsBackend;
   final String groqApiKey;
   final String deepgramApiKey;
   final String hfToken;
@@ -121,6 +122,7 @@ class FfiEngineConfig {
     required this.translateTo,
     required this.voicePath,
     required this.ttsSpeed,
+    required this.ttsBackend,
     required this.groqApiKey,
     required this.deepgramApiKey,
     required this.hfToken,
@@ -137,6 +139,7 @@ class FfiEngineConfig {
       translateTo.hashCode ^
       voicePath.hashCode ^
       ttsSpeed.hashCode ^
+      ttsBackend.hashCode ^
       groqApiKey.hashCode ^
       deepgramApiKey.hashCode ^
       hfToken.hashCode ^
@@ -155,6 +158,7 @@ class FfiEngineConfig {
           translateTo == other.translateTo &&
           voicePath == other.voicePath &&
           ttsSpeed == other.ttsSpeed &&
+          ttsBackend == other.ttsBackend &&
           groqApiKey == other.groqApiKey &&
           deepgramApiKey == other.deepgramApiKey &&
           hfToken == other.hfToken &&

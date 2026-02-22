@@ -26,21 +26,34 @@ const _sourceLangs = [
   ('Turkish', 'Turkish'),
 ];
 
-// Languages supported for target (output) — English has voice cloning
+// Languages supported for target (output)
+// When using Chatterbox backend, all 23 languages have voice cloning.
+// When using Pocket backend, only English has voice cloning.
 const _targetLangs = [
-  ('English', 'English', true),     // voice clone available
-  ('Romanian', 'Romanian', false),
-  ('Spanish', 'Spanish', false),
-  ('French', 'French', false),
-  ('German', 'German', false),
-  ('Italian', 'Italian', false),
-  ('Portuguese', 'Portuguese', false),
-  ('Dutch', 'Dutch', false),
-  ('Polish', 'Polish', false),
-  ('Russian', 'Russian', false),
-  ('Japanese', 'Japanese', false),
-  ('Korean', 'Korean', false),
-  ('Chinese', 'Chinese', false),
+  ('English', 'English'),
+  ('Romanian', 'Romanian'),
+  ('Spanish', 'Spanish'),
+  ('French', 'French'),
+  ('German', 'German'),
+  ('Italian', 'Italian'),
+  ('Portuguese', 'Portuguese'),
+  ('Dutch', 'Dutch'),
+  ('Polish', 'Polish'),
+  ('Russian', 'Russian'),
+  ('Japanese', 'Japanese'),
+  ('Korean', 'Korean'),
+  ('Chinese', 'Chinese'),
+  ('Arabic', 'Arabic'),
+  ('Danish', 'Danish'),
+  ('Finnish', 'Finnish'),
+  ('Greek', 'Greek'),
+  ('Hebrew', 'Hebrew'),
+  ('Hindi', 'Hindi'),
+  ('Malay', 'Malay'),
+  ('Norwegian', 'Norwegian'),
+  ('Swedish', 'Swedish'),
+  ('Swahili', 'Swahili'),
+  ('Turkish', 'Turkish'),
 ];
 
 class InterpreterScreen extends StatefulWidget {
@@ -72,8 +85,9 @@ class InterpreterScreenState extends State<InterpreterScreen> {
       sttLanguage: widget.settings.sourceLang,
       translateFrom: widget.settings.sourceLang.isEmpty ? '' : widget.settings.sourceLang,
       translateTo: widget.settings.targetLang,
-      voicePath: widget.settings.targetLang == 'English' ? widget.settings.activeVoicePath : '',
-      ttsSpeed: 0, groqApiKey: '', deepgramApiKey: '',
+      voicePath: widget.settings.activeVoicePath,
+      ttsSpeed: 0, ttsBackend: widget.settings.ttsBackend,
+      groqApiKey: '', deepgramApiKey: '',
       hfToken: '', parakeetModelDir: '', vadModelPath: '', audioOutput: '',
     )).listen(
       (event) {
@@ -159,29 +173,38 @@ class InterpreterScreenState extends State<InterpreterScreen> {
         const SizedBox(width: 8),
         Icon(Icons.volume_up_rounded, size: 16, color: _running ? C.info : C.textSub),
         const SizedBox(width: 6),
-        // TODO: Re-enable target language dropdown when multi-language TTS is available
-        // Currently pocket-tts only supports English output
-        // _dropdown(
-        //   value: widget.settings.targetLang,
-        //   items: _targetLangs.map((e) => (e.$1, e.$2)).toList(),
-        //   locked: locked,
-        //   onChanged: (v) => setState(() {
-        //     widget.settings.targetLang = v;
-        //     if (v != 'English' && widget.settings.activeVoicePath.isNotEmpty) {
-        //       widget.settings.activeVoicePath = '';
-        //     }
-        //     widget.settings.save();
-        //   }),
-        // ),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-          decoration: BoxDecoration(color: C.level2, borderRadius: BorderRadius.circular(6)),
-          child: const Text('English', style: TextStyle(fontSize: 12, color: C.text, fontWeight: FontWeight.w500)),
+        _dropdown(
+          value: widget.settings.targetLang,
+          items: _targetLangs.map((e) => (e.$1, e.$2)).toList(),
+          locked: locked,
+          onChanged: (v) => setState(() {
+            widget.settings.targetLang = v;
+            // Auto-switch to chatterbox for non-English, pocket only does English
+            if (v != 'English' && widget.settings.ttsBackend == 'pocket') {
+              widget.settings.ttsBackend = 'chatterbox';
+            }
+            widget.settings.save();
+          }),
         ),
         if (widget.settings.activeVoicePath.isNotEmpty)
           Padding(padding: const EdgeInsets.only(left: 8),
             child: Icon(Icons.record_voice_over_rounded, size: 13, color: C.accent.withAlpha(120))),
         const Spacer(),
+        _dropdown(
+          value: widget.settings.ttsBackend,
+          items: const [('pocket', 'Pocket (CPU)'), ('chatterbox', 'Chatterbox (GPU)')],
+          locked: locked,
+          onChanged: (v) => setState(() {
+            widget.settings.ttsBackend = v;
+            // Pocket only supports English
+            if (v == 'pocket' && widget.settings.targetLang != 'English') {
+              widget.settings.targetLang = 'English';
+            }
+            widget.settings.save();
+          }),
+          small: true,
+        ),
+        const SizedBox(width: 8),
         _dropdown(
           value: widget.settings.sttBackend,
           items: const [('parakeet', 'Talkye Local'), ('deepgram', 'Talkye Max')],

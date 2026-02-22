@@ -56,6 +56,9 @@ anyhow = "1"
 # Bytes for audio buffers
 bytes = "1"
 
+# Base64 decoding (Chatterbox streaming PCM)
+base64 = "0.22"
+
 # Futures utilities
 futures-util = "0.3"
 

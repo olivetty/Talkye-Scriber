@@ -715,6 +715,7 @@ impl SseDecode for crate::api::engine::FfiEngineConfig {
         let mut var_translateTo = <String>::sse_decode(deserializer);
         let mut var_voicePath = <String>::sse_decode(deserializer);
         let mut var_ttsSpeed = <f32>::sse_decode(deserializer);
+        let mut var_ttsBackend = <String>::sse_decode(deserializer);
         let mut var_groqApiKey = <String>::sse_decode(deserializer);
         let mut var_deepgramApiKey = <String>::sse_decode(deserializer);
         let mut var_hfToken = <String>::sse_decode(deserializer);
@@ -728,6 +729,7 @@ impl SseDecode for crate::api::engine::FfiEngineConfig {
             translate_to: var_translateTo,
             voice_path: var_voicePath,
             tts_speed: var_ttsSpeed,
+            tts_backend: var_ttsBackend,
             groq_api_key: var_groqApiKey,
             deepgram_api_key: var_deepgramApiKey,
             hf_token: var_hfToken,
@@ -960,6 +962,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::engine::FfiEngineConfig {
             self.translate_to.into_into_dart().into_dart(),
             self.voice_path.into_into_dart().into_dart(),
             self.tts_speed.into_into_dart().into_dart(),
+            self.tts_backend.into_into_dart().into_dart(),
             self.groq_api_key.into_into_dart().into_dart(),
             self.deepgram_api_key.into_into_dart().into_dart(),
             self.hf_token.into_into_dart().into_dart(),
@@ -1134,6 +1137,7 @@ impl SseEncode for crate::api::engine::FfiEngineConfig {
         <String>::sse_encode(self.translate_to, serializer);
         <String>::sse_encode(self.voice_path, serializer);
         <f32>::sse_encode(self.tts_speed, serializer);
+        <String>::sse_encode(self.tts_backend, serializer);
         <String>::sse_encode(self.groq_api_key, serializer);
         <String>::sse_encode(self.deepgram_api_key, serializer);
         <String>::sse_encode(self.hf_token, serializer);

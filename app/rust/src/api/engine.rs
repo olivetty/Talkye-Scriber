@@ -49,6 +49,7 @@ pub struct FfiEngineConfig {
     pub translate_to: String,
     pub voice_path: String,
     pub tts_speed: f32,
+    pub tts_backend: String,
     pub groq_api_key: String,
     pub deepgram_api_key: String,
     pub hf_token: String,
@@ -128,6 +129,7 @@ pub fn start_engine(config: FfiEngineConfig, sink: StreamSink<FfiEngineEvent>) {
         let deepgram_key = env_fb(&config.deepgram_api_key, "DEEPGRAM_API_KEY");
         let hf_token = env_fb(&config.hf_token, "HF_TOKEN");
         let voice = env_fb(&config.voice_path, "POCKET_VOICE");
+        let tts_backend = env_fb(&config.tts_backend, "TTS_BACKEND");
         let parakeet_dir = env_fb(&config.parakeet_model_dir, "PARAKEET_MODEL");
         let vad_path = env_fb(&config.vad_model_path, "VAD_MODEL");
         let audio_output = env_fb(&config.audio_output, "AUDIO_OUTPUT");
@@ -167,6 +169,7 @@ pub fn start_engine(config: FfiEngineConfig, sink: StreamSink<FfiEngineEvent>) {
                 speed,
                 output_device: opt(audio_output),
                 language: if to_lang.is_empty() { "English".into() } else { to_lang },
+                backend: if tts_backend.is_empty() { "pocket".into() } else { tts_backend },
             },
             audio: talkye_core::config::AudioConfig {
                 source: None,
