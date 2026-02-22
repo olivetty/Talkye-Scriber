@@ -142,7 +142,7 @@ impl PlaybackSession {
             self.drained.store(false, Ordering::Release);
         }
 
-        let mut buf = self.buffer.lock().unwrap();
+        let Ok(mut buf) = self.buffer.lock() else { return };
         buf.extend(samples);
         if !self.ready.load(Ordering::Relaxed) && buf.len() >= self.pre_buffer_samples {
             self.ready.store(true, Ordering::Release);
