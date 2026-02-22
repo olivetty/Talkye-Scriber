@@ -40,7 +40,7 @@ MAX_SEGMENT_FRAMES = 500      # ~15s max single utterance
 class VoiceChat:
     """Voice chat session — manages the full voice-to-voice loop."""
 
-    def __init__(self, on_event: Callable[[dict], None], model: str = "local"):
+    def __init__(self, on_event: Callable[[dict], None], model: str = "local", language: str = "en"):
         """
         Args:
             on_event: Callback for events. Events:
@@ -49,9 +49,11 @@ class VoiceChat:
                 {"type": "assistant_text", "text": "...", "done": bool}
                 {"type": "error", "message": "..."}
             model: LLM model ID — "local" or a Groq model ID.
+            language: ISO 639-1 language code for TTS output (e.g. "en", "ro", "fr").
         """
         self._on_event = on_event
         self._model = model
+        self._language = language
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._mic_proc: Optional[subprocess.Popen] = None
@@ -243,8 +245,18 @@ class VoiceChat:
 
         # 3. LLM — generate response (local or Groq cloud)
         try:
+            # Map ISO code to full language name for the system prompt
+            _lang_names = {
+                "en": "English", "ro": "Romanian", "es": "Spanish", "fr": "French",
+                "de": "German", "it": "Italian", "pt": "Portuguese", "nl": "Dutch",
+                "pl": "Polish", "ru": "Russian", "ja": "Japanese", "ko": "Korean",
+                "zh": "Chinese", "ar": "Arabic", "tr": "Turkish", "hi": "Hindi",
+                "sv": "Swedish", "da": "Danish", "fi": "Finnish", "el": "Greek",
+                "he": "Hebrew", "no": "Norwegian", "ms": "Malay", "sw": "Swahili",
+            }
+            lang_name = _lang_names.get(self._language, "English")
             system = (
-                "You are a voice assistant. Reply in the same language the user speaks. "
+                f"You are a voice assistant. You MUST reply in {lang_name}. "
                 "Keep it short: 1-3 sentences. No markdown. Plain text only."
             )
             hist = [m for m in self._history[-10:] if m is not self._history[-1]]
@@ -326,8 +338,8 @@ class VoiceChat:
         self._speaking = True
         self._emit({"type": "state", "state": "speaking"})
         try:
-            logger.info("Voice chat TTS: speaking '%s'", response_text[:80])
-            ok = speak(response_text)
+            logger.info("Voice chat TTS: speaking '%s' (lang=%s)", response_text[:80], self._language)
+            ok = speak(response_text, language_id=self._language)
             logger.info("Voice chat TTS: done (ok=%s)", ok)
         except Exception as e:
             logger.error("TTS failed: %s", e)

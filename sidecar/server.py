@@ -755,9 +755,10 @@ async def voice_chat_ws(ws: WebSocket):
                     _voice_chat.stop()
                 from voice_chat import VoiceChat
                 model = data.get("model", "local")
-                _voice_chat = VoiceChat(on_event=_on_event, model=model)
+                language = data.get("language", "en")
+                _voice_chat = VoiceChat(on_event=_on_event, model=model, language=language)
                 _voice_chat.start()
-                logger.info("Voice chat started via WebSocket (model=%s)", model)
+                logger.info("Voice chat started via WebSocket (model=%s, lang=%s)", model, language)
 
             elif action == "stop":
                 if _voice_chat and _voice_chat.running:

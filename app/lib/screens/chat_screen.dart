@@ -55,6 +55,33 @@ class _ChatScreenState extends State<ChatScreen> {
   WebSocket? _voiceWs;
   bool _ttsAvailable = false;
 
+  // Voice chat language
+  String _voiceLang = 'en';
+  static const _voiceLangs = [
+    ('en', 'English'),
+    ('ro', 'Romanian'),
+    ('es', 'Spanish'),
+    ('fr', 'French'),
+    ('de', 'German'),
+    ('it', 'Italian'),
+    ('pt', 'Portuguese'),
+    ('nl', 'Dutch'),
+    ('pl', 'Polish'),
+    ('ru', 'Russian'),
+    ('ja', 'Japanese'),
+    ('ko', 'Korean'),
+    ('zh', 'Chinese'),
+    ('ar', 'Arabic'),
+    ('tr', 'Turkish'),
+    ('hi', 'Hindi'),
+    ('sv', 'Swedish'),
+    ('da', 'Danish'),
+    ('fi', 'Finnish'),
+    ('el', 'Greek'),
+    ('he', 'Hebrew'),
+    ('no', 'Norwegian'),
+  ];
+
   @override
   void initState() {
     super.initState();
@@ -266,7 +293,7 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
     setState(() { _voiceMode = true; _voiceState = 'connecting'; });
-    _voiceWs!.add(jsonEncode({'action': 'start', 'model': _selectedModel}));
+    _voiceWs!.add(jsonEncode({'action': 'start', 'model': _selectedModel, 'language': _voiceLang}));
     _voiceWs!.listen(
       (data) {
         if (!mounted) return;
@@ -444,7 +471,10 @@ class _ChatScreenState extends State<ChatScreen> {
         _modelSelector(),
         const Spacer(),
         // Voice mode toggle
-        if (_modelReady && _ttsAvailable)
+        if (_modelReady && _ttsAvailable) ...[
+          // Language selector for voice mode
+          _voiceLangSelector(),
+          const SizedBox(width: 6),
           GestureDetector(
             onTap: _toggleVoiceMode,
             child: MouseRegion(
@@ -465,6 +495,7 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ),
           ),
+        ],
         if (_messages.isNotEmpty) ...[
           const SizedBox(width: 8),
           GestureDetector(
@@ -583,6 +614,33 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
           const SizedBox(width: 4),
           Icon(Icons.expand_more_rounded, size: 14, color: statusColor),
+        ]),
+      ),
+    );
+  }
+
+  Widget _voiceLangSelector() {
+    final label = _voiceLangs.firstWhere((e) => e.$1 == _voiceLang, orElse: () => _voiceLangs.first).$2;
+    return PopupMenuButton<String>(
+      onSelected: (v) => setState(() => _voiceLang = v),
+      offset: const Offset(0, 36),
+      color: C.level2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      itemBuilder: (_) => _voiceLangs.map((e) => PopupMenuItem(
+        value: e.$1, height: 32,
+        child: Text(e.$2, style: TextStyle(fontSize: 12,
+          color: e.$1 == _voiceLang ? C.accent : C.text,
+          fontWeight: e.$1 == _voiceLang ? FontWeight.w600 : FontWeight.w400)),
+      )).toList(),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(color: C.level2, borderRadius: BorderRadius.circular(6)),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.language_rounded, size: 12, color: C.textMuted),
+          const SizedBox(width: 4),
+          Text(label, style: const TextStyle(fontSize: 10, color: C.textSub, fontWeight: FontWeight.w500)),
+          const SizedBox(width: 2),
+          const Icon(Icons.expand_more_rounded, size: 12, color: C.textMuted),
         ]),
       ),
     );
