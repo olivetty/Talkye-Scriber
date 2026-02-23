@@ -36,13 +36,6 @@ pub struct TtsConfig {
     pub speed: f32,
     pub output_device: Option<String>,
     pub language: String,
-    /// TTS backend: "pocket" (CPU, English) or "chatterbox" (GPU, 23 langs via sidecar)
-    pub backend: String,
-    // Chatterbox quality parameters
-    pub cbx_exaggeration: f64,
-    pub cbx_cfg_weight: f64,
-    pub cbx_temperature: f64,
-    pub cbx_context_window: i32,
 }
 
 pub struct AudioConfig {
@@ -94,11 +87,6 @@ impl Config {
                 speed: env_parse("POCKET_SPEED", 1.0),
                 output_device: env_optional_single("AUDIO_OUTPUT"),
                 language: env_single("TRANSLATE_TO", "English"),
-                backend: env_single("TTS_BACKEND", "pocket"),
-                cbx_exaggeration: env_parse("CBX_EXAGGERATION", 0.5),
-                cbx_cfg_weight: env_parse("CBX_CFG_WEIGHT", 0.5),
-                cbx_temperature: env_parse("CBX_TEMPERATURE", 0.8),
-                cbx_context_window: env_parse("CBX_CONTEXT_WINDOW", 50),
             },
             audio: AudioConfig {
                 source: env_optional_single("AUDIO_SOURCE"),

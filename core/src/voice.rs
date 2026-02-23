@@ -275,94 +275,6 @@ fn save_wav(path: &str, samples: &[f32], sample_rate: u32) -> Result<()> {
     Ok(())
 }
 
-/// Prepare a Chatterbox-optimized voice reference from a raw recording.
-/// Trims silence, peak-normalizes to -1dB, saves as `{stem}_cbx.wav` at 24kHz mono.
-/// Returns the path to the optimized file.
-pub fn prepare_cbx_voice(wav_path: &str) -> Result<String> {
-    let p = Path::new(wav_path);
-    if !p.exists() {
-        anyhow::bail!("WAV not found: {wav_path}");
-    }
-
-    let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("voice");
-    let dir = p.parent().unwrap_or(Path::new("."));
-    let out_path = dir.join(format!("{stem}_cbx.wav"));
-
-    // Read WAV
-    let mut reader = hound::WavReader::open(wav_path)
-        .context("Failed to read WAV")?;
-    let spec = reader.spec();
-    let samples: Vec<f32> = if spec.sample_format == hound::SampleFormat::Float {
-        reader.samples::<f32>().filter_map(|s| s.ok()).collect()
-    } else {
-        reader.samples::<i16>().filter_map(|s| s.ok())
-            .map(|s| s as f32 / 32768.0).collect()
-    };
-
-    if samples.is_empty() {
-        anyhow::bail!("Empty WAV file: {wav_path}");
-    }
-
-    // Convert to mono if stereo
-    let mono: Vec<f32> = if spec.channels > 1 {
-        samples.chunks(spec.channels as usize)
-            .map(|ch| ch.iter().sum::<f32>() / ch.len() as f32)
-            .collect()
-    } else {
-        samples
-    };
-
-    // Trim silence (threshold: -40dB = 0.01 amplitude)
-    let threshold = 0.01f32;
-    let start = mono.iter().position(|&s| s.abs() > threshold).unwrap_or(0);
-    let end = mono.iter().rposition(|&s| s.abs() > threshold).unwrap_or(mono.len() - 1) + 1;
-    let trimmed = &mono[start..end.min(mono.len())];
-
-    if trimmed.len() < 24000 {
-        // Less than 1 second of audio after trimming — use original
-        tracing::warn!("[VOICE] Very short audio after trim, using original");
-    }
-
-    let audio = if trimmed.len() >= 24000 { trimmed } else { &mono };
-
-    // Peak normalize to -1dB (0.891)
-    let peak = audio.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-    let target = 0.891f32; // -1dB
-    let gain = if peak > 0.001 { target / peak } else { 1.0 };
-
-    let normalized: Vec<f32> = audio.iter().map(|&s| (s * gain).clamp(-1.0, 1.0)).collect();
-
-    // Resample to 24kHz if needed
-    let final_samples = if spec.sample_rate != 24000 {
-        // Simple linear interpolation resample
-        let ratio = 24000.0 / spec.sample_rate as f64;
-        let new_len = (normalized.len() as f64 * ratio) as usize;
-        let mut resampled = Vec::with_capacity(new_len);
-        for i in 0..new_len {
-            let src_pos = i as f64 / ratio;
-            let idx = src_pos as usize;
-            let frac = src_pos - idx as f64;
-            let s0 = normalized.get(idx).copied().unwrap_or(0.0);
-            let s1 = normalized.get(idx + 1).copied().unwrap_or(s0);
-            resampled.push(s0 + (s1 - s0) * frac as f32);
-        }
-        resampled
-    } else {
-        normalized
-    };
-
-    save_wav(&out_path.to_string_lossy(), &final_samples, 24000)?;
-
-    let duration = final_samples.len() as f32 / 24000.0;
-    tracing::info!(
-        "[VOICE] Chatterbox voice prepared: {} ({:.1}s, peak normalized, gain={:.2})",
-        out_path.display(), duration, gain,
-    );
-
-    Ok(out_path.to_string_lossy().to_string())
-}
-
-
 /// Delete a voice (wav, safetensors, and preview).
 pub fn delete_voice(voice_path: &str) -> Result<()> {
     let p = Path::new(voice_path);
@@ -379,9 +291,6 @@ pub fn delete_voice(voice_path: &str) -> Result<()> {
         let st = dir.join(format!("{stem}.safetensors"));
         if st.exists() { std::fs::remove_file(st)?; }
     }
-    // Remove Chatterbox-optimized WAV
-    let cbx = dir.join(format!("{stem}_cbx.wav"));
-    if cbx.exists() { std::fs::remove_file(cbx)?; }
     // Remove preview
     let preview = dir.join(format!("{stem}_preview.wav"));
     if preview.exists() { std::fs::remove_file(preview)?; }

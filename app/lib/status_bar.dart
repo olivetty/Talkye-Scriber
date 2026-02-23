@@ -40,19 +40,15 @@ class _StatusBarState extends State<StatusBar> {
     // Sidecar process tree (port 8179)
     final sidecarPid = await _findPid('uvicorn.*server:app.*8179');
     final sidecar = sidecarPid != null ? await _sampleTree(sidecarPid) : null;
-    // Chatterbox worker process tree (port 8180)
-    final cbxPid = await _findPid('chatterbox_worker.*8180');
-    final cbx = cbxPid != null ? await _sampleTree(cbxPid) : null;
     // GPU — only our processes
     final ourPids = <int>[pid];
     if (sidecarPid != null) ourPids.add(sidecarPid);
-    if (cbxPid != null) ourPids.add(cbxPid);
     final gpu = await _readGpuForPids(ourPids);
 
     if (!mounted) return;
     setState(() {
-      _ramMB = ((app?.rssBytes ?? 0) + (sidecar?.rssBytes ?? 0) + (cbx?.rssBytes ?? 0)) ~/ (1024 * 1024);
-      _cpuPct = (app?.cpuPct ?? 0) + (sidecar?.cpuPct ?? 0) + (cbx?.cpuPct ?? 0);
+      _ramMB = ((app?.rssBytes ?? 0) + (sidecar?.rssBytes ?? 0)) ~/ (1024 * 1024);
+      _cpuPct = (app?.cpuPct ?? 0) + (sidecar?.cpuPct ?? 0);
       _gpuMB = gpu.$1;
       _gpuTotalMB = gpu.$2;
     });

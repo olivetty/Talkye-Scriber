@@ -1,10 +1,6 @@
-//! TTS backend abstraction — pocket-tts + Chatterbox sidecar.
-//!
-//! pocket-tts: CPU-only, English model, voice cloning, streaming.
-//! sidecar: GPU, 23 languages via Chatterbox worker (port 8180).
+//! TTS backend — pocket-tts (CPU, English, voice cloning, streaming).
 
 pub mod pocket;
-pub mod sidecar;
 
 use anyhow::Result;
 use crate::config::TtsConfig;
@@ -12,7 +8,7 @@ use crate::config::TtsConfig;
 /// Trait for TTS backends — generate streaming PCM audio from text.
 pub trait TtsBackend: Send {
     /// Stream TTS, calling `on_chunk` with each PCM f32 chunk.
-    /// `language` is the target language name (e.g. "English", "French").
+    /// `language` is the target language name (e.g. "English").
     /// Returns (first_chunk_ms, total_ms).
     fn generate_stream(
         &self,
@@ -28,16 +24,8 @@ pub trait TtsBackend: Send {
     fn playback_rate(&self) -> u32;
 }
 
-/// Create the TTS backend based on config.backend ("pocket" or "chatterbox").
+/// Create the TTS backend (Pocket TTS only).
 pub fn create_backend(config: &TtsConfig) -> Result<Box<dyn TtsBackend>> {
-    match config.backend.as_str() {
-        "chatterbox" => {
-            tracing::info!("[TTS] using Chatterbox sidecar backend (GPU, 23 langs)");
-            Ok(Box::new(sidecar::SidecarTts::new(config)?))
-        }
-        _ => {
-            tracing::info!("[TTS] using Pocket TTS backend (CPU)");
-            Ok(Box::new(pocket::PocketTts::new(config)?))
-        }
-    }
+    tracing::info!("[TTS] using Pocket TTS backend (CPU)");
+    Ok(Box::new(pocket::PocketTts::new(config)?))
 }

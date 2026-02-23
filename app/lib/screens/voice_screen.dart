@@ -5,9 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:lottie/lottie.dart';
 import '../theme.dart';
 import '../main.dart';
+import '../voice_names.dart';
 import '../src/rust/api/engine.dart';
 
-// Processing status messages — cycles through these for a techy feel
 const _processingSteps = [
   'Analyzing vocal patterns...',
   'Extracting spectral features...',
@@ -19,7 +19,6 @@ const _processingSteps = [
   'Generating preview...',
 ];
 
-// Teleprompter text — phonetically diverse, natural English, ~75 words for 30s
 const _promptText =
   'The morning sun cast a warm golden light across the quiet village. '
   'Birds sang softly in the trees while a gentle breeze carried the scent '
@@ -40,6 +39,7 @@ enum _Step { idle, countdown, recording, processing, naming, done, error }
 
 class _VoiceScreenState extends State<VoiceScreen> {
   List<FfiVoiceInfo> _voices = [];
+  List<FfiVoiceInfo> _builtinVoices = [];
   _Step _step = _Step.idle;
   String _newName = '';
   static const double _recordDuration = 30.0;
@@ -49,16 +49,11 @@ class _VoiceScreenState extends State<VoiceScreen> {
   Timer? _timer;
   String? _errorMsg;
   String? _previewingPath;
-  // Temp name for recording (renamed after user picks a name)
   String _tempName = '';
-  // Paths produced during processing
   String _tempStPath = '';
-  // Generation counter — ignore stale futures after cancel
   int _generation = 0;
-  // Processing step animation
   int _processingStep = 0;
   Timer? _processingTimer;
-
   late final List<String> _words;
 
   @override
@@ -66,9 +61,14 @@ class _VoiceScreenState extends State<VoiceScreen> {
     super.initState();
     _words = _promptText.split(' ');
     _loadVoices();
+    _loadBuiltins();
   }
 
   void _loadVoices() => setState(() => _voices = listVoices());
+  void _loadBuiltins() async {
+    final b = await listBuiltinVoices();
+    if (mounted) setState(() => _builtinVoices = b);
+  }
   String get _activePath => widget.activeVoicePath;
 
   @override
@@ -88,28 +88,17 @@ class _VoiceScreenState extends State<VoiceScreen> {
     );
   }
 
-  // ── Voice List ──
-
-  // Built-in voices (not deletable)
-  static final _builtinDir = '${voicesDir()}/builtin';
-  static final _builtinVoices = [
-    ('Cosette', 'Female · Natural English', '$_builtinDir/cosette.safetensors'),
-    ('Marius', 'Male · Natural English', '$_builtinDir/marius.safetensors'),
-  ];
-
   Widget _voiceList() {
     return ListView(children: [
-      // Standard voices section
       const Text('STANDARD VOICES',
         style: TextStyle(fontSize: 11, color: C.textMuted, fontWeight: FontWeight.w600, letterSpacing: 1)),
       const SizedBox(height: 10),
       for (final v in _builtinVoices) ...[
-        _voiceCard(name: v.$1, desc: v.$2, path: v.$3,
-          isBuiltin: true, isActive: _activePath == v.$3),
+        _voiceCard(name: voiceDisplayName(v.name), desc: 'Builtin · Ready', path: v.path,
+          isBuiltin: true, isActive: _activePath == v.path),
         const SizedBox(height: 8),
       ],
       const SizedBox(height: 20),
-      // My voices section
       const Text('MY VOICES',
         style: TextStyle(fontSize: 11, color: C.textMuted, fontWeight: FontWeight.w600, letterSpacing: 1)),
       const SizedBox(height: 10),
@@ -119,7 +108,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
       for (final v in _voices)
         Padding(padding: const EdgeInsets.only(bottom: 8), child: _voiceCard(
           name: v.name, path: v.path,
-          desc: _voiceDesc(v),
+          desc: v.isPrecomputed ? 'Cloned · Ready' : 'Raw recording',
           isBuiltin: false, isActive: _activePath == v.path,
         )),
       const SizedBox(height: 8),
@@ -132,21 +121,18 @@ class _VoiceScreenState extends State<VoiceScreen> {
     bool isBuiltin = false, bool isActive = false,
   }) {
     final isPreviewing = _previewingPath == path;
-    final hasCbx = !isBuiltin && _hasCbxVoice(path);
-    final hasPocket = !isBuiltin && (path.endsWith('.safetensors') || File(path.replaceAll(RegExp(r'\.[^.]+$'), '.safetensors')).existsSync());
     return _HoverCard(
       onTap: () => widget.onVoiceChanged(path),
       isActive: isActive,
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Container(width: 40, height: 40,
-            decoration: BoxDecoration(
-              color: (isActive ? C.accent : C.textMuted).withAlpha(20),
-              borderRadius: BorderRadius.circular(10)),
-            child: Icon(isBuiltin ? Icons.graphic_eq_rounded : Icons.record_voice_over_rounded,
-              size: 20, color: isActive ? C.accent : C.textMuted),
-          ),
-          const SizedBox(width: 14),
+      child: Row(children: [
+        Container(width: 40, height: 40,
+          decoration: BoxDecoration(
+            color: (isActive ? C.accent : C.textMuted).withAlpha(20),
+            borderRadius: BorderRadius.circular(10)),
+          child: Icon(isBuiltin ? Icons.graphic_eq_rounded : Icons.record_voice_over_rounded,
+            size: 20, color: isActive ? C.accent : C.textMuted),
+        ),
+        const SizedBox(width: 14),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(name[0].toUpperCase() + name.substring(1),
             style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: C.text)),
@@ -168,100 +154,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
             child: const Text('Active', style: TextStyle(fontSize: 10, color: C.success, fontWeight: FontWeight.w600)),
           ),
       ]),
-        // Engine readiness badges for custom voices
-        if (!isBuiltin) ...[
-          const SizedBox(height: 8),
-          Row(children: [
-            const SizedBox(width: 54), // align with text
-            _engineBadge('Pocket', hasPocket, Icons.memory_rounded),
-            const SizedBox(width: 6),
-            _engineBadge('Chatterbox', hasCbx, Icons.graphic_eq_rounded),
-            if (!hasCbx && _hasRawWav(path)) ...[
-              const SizedBox(width: 8),
-              _prepareBtn(path, name),
-            ],
-          ]),
-        ],
-      ]),
-    );
-  }
-
-  String _voiceDesc(FfiVoiceInfo v) {
-    final hasCbx = _hasCbxVoice(v.path);
-    final hasPocket = v.isPrecomputed;
-    if (hasPocket && hasCbx) return 'Cloned · Both engines ready';
-    if (hasPocket) return 'Cloned · Pocket ready';
-    if (hasCbx) return 'Cloned · Chatterbox ready';
-    return 'Raw recording';
-  }
-
-  bool _hasCbxVoice(String path) {
-    final stem = path.replaceAll(RegExp(r'\.[^.]+$'), '');
-    return File('${stem}_cbx.wav').existsSync();
-  }
-
-  bool _hasRawWav(String path) {
-    final stem = path.replaceAll(RegExp(r'\.[^.]+$'), '');
-    return File('$stem.wav').existsSync();
-  }
-
-  Widget _engineBadge(String label, bool ready, IconData icon) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: (ready ? C.success : C.textMuted).withAlpha(15),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(ready ? Icons.check_circle_rounded : Icons.circle_outlined,
-          size: 10, color: ready ? C.success : C.textMuted),
-        const SizedBox(width: 3),
-        Text(label, style: TextStyle(fontSize: 9, color: ready ? C.success : C.textMuted,
-          fontWeight: FontWeight.w500)),
-      ]),
-    );
-  }
-
-  bool _preparingCbx = false;
-
-  Widget _prepareBtn(String path, String name) {
-    return GestureDetector(
-      onTap: _preparingCbx ? null : () async {
-        final stem = path.replaceAll(RegExp(r'\.[^.]+$'), '');
-        final wavPath = '$stem.wav';
-        setState(() => _preparingCbx = true);
-        try {
-          final result = await prepareCbxVoice(wavPath: wavPath);
-          if (result.startsWith('ERROR')) {
-            setState(() => _errorMsg = result);
-          } else {
-            LogBuffer.add('CBX voice prepared for $name: $result');
-          }
-        } catch (e) {
-          setState(() => _errorMsg = 'Prepare failed: $e');
-        }
-        if (mounted) setState(() => _preparingCbx = false);
-      },
-      child: MouseRegion(
-        cursor: _preparingCbx ? SystemMouseCursors.basic : SystemMouseCursors.click,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-          decoration: BoxDecoration(
-            color: C.accent.withAlpha(20),
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            if (_preparingCbx)
-              const SizedBox(width: 10, height: 10,
-                child: CircularProgressIndicator(strokeWidth: 1, color: C.accent))
-            else
-              const Icon(Icons.auto_fix_high_rounded, size: 10, color: C.accent),
-            const SizedBox(width: 3),
-            Text(_preparingCbx ? 'Preparing...' : 'Optimize for Chatterbox',
-              style: const TextStyle(fontSize: 9, color: C.accent, fontWeight: FontWeight.w500)),
-          ]),
-        ),
-      ),
     );
   }
 
@@ -276,8 +168,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
     );
   }
 
-  // ── Clone Flow: countdown → recording → processing → naming → done ──
-
   void _startCloneFlow() {
     final ts = DateTime.now().millisecondsSinceEpoch;
     _tempName = '_temp_clone_$ts';
@@ -286,29 +176,23 @@ class _VoiceScreenState extends State<VoiceScreen> {
     _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 1), (t) {
       if (!mounted) { t.cancel(); return; }
-      if (_countdownValue <= 1) {
-        t.cancel();
-        _startRecording();
-      } else {
-        setState(() => _countdownValue--);
-      }
+      if (_countdownValue <= 1) { t.cancel(); _startRecording(); }
+      else { setState(() => _countdownValue--); }
     });
   }
 
   void _cancelFlow() {
-    final gen = _generation;
-    _generation++; // invalidate any in-flight futures
+    _generation++;
     _timer?.cancel();
     _stopProcessingAnim();
     setState(() { _step = _Step.idle; });
-    // Clean up temp files in background
-    _cleanupTemp(_tempName, gen);
+    _cleanupTemp(_tempName);
   }
 
-  Future<void> _cleanupTemp(String tempName, int gen) async {
+  Future<void> _cleanupTemp(String tempName) async {
     final dir = voicesDir();
     final base = '$dir/$tempName';
-    for (final ext in ['.wav', '.safetensors', '_cbx.wav', '_preview.wav']) {
+    for (final ext in ['.wav', '.safetensors', '_preview.wav']) {
       try { await File('$base$ext').delete(); } catch (_) {}
     }
   }
@@ -316,7 +200,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
   void _startRecording() {
     final gen = _generation;
     setState(() { _step = _Step.recording; _elapsed = 0; _highlightWord = 0; });
-
     final msPerWord = (1000 / 2.8).round();
     _timer?.cancel();
     _timer = Timer.periodic(Duration(milliseconds: msPerWord), (t) {
@@ -330,7 +213,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
 
     recordVoice(name: _tempName, durationSecs: _recordDuration).then((result) {
       _timer?.cancel();
-      if (!mounted || _generation != gen) return; // cancelled
+      if (!mounted || _generation != gen) return;
       if (result.startsWith('ERROR')) {
         _stopProcessingAnim();
         setState(() { _step = _Step.error; _errorMsg = result; });
@@ -346,19 +229,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
           return;
         }
         _tempStPath = stPath;
-        // Also prepare Chatterbox-optimized voice (normalized, trimmed)
-        prepareCbxVoice(wavPath: result).then((cbxPath) {
-          if (mounted && _generation == gen) {
-            if (cbxPath.startsWith('ERROR')) {
-              LogBuffer.add('CBX voice prep warning: $cbxPath');
-            } else {
-              LogBuffer.add('CBX voice ready: $cbxPath');
-            }
-          }
-        }).catchError((e) {
-          LogBuffer.add('CBX voice prep error: $e');
-        });
-        // Generate preview (TTS model already warm)
         previewVoice(voicePath: stPath).then((_) {
           if (!mounted || _generation != gen) return;
           _stopProcessingAnim();
@@ -371,8 +241,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
     });
   }
 
-  // ── Rename temp files to final name ──
-
   void _startProcessingAnim() {
     _processingStep = 0;
     _processingTimer?.cancel();
@@ -382,24 +250,19 @@ class _VoiceScreenState extends State<VoiceScreen> {
     });
   }
 
-  void _stopProcessingAnim() {
-    _processingTimer?.cancel();
-    _processingTimer = null;
-  }
+  void _stopProcessingAnim() { _processingTimer?.cancel(); _processingTimer = null; }
 
   Future<void> _finalizeName(String name) async {
     final dir = voicesDir();
     final oldBase = '$dir/$_tempName';
     final newBase = '$dir/$name';
     try {
-      // Rename: wav, safetensors, cbx.wav, preview
-      for (final ext in ['.wav', '.safetensors', '_cbx.wav']) {
+      for (final ext in ['.wav', '.safetensors']) {
         final old = File('$oldBase$ext');
         if (await old.exists()) await old.rename('$newBase$ext');
       }
       final oldPreview = File('${oldBase}_preview.wav');
       if (await oldPreview.exists()) await oldPreview.rename('${newBase}_preview.wav');
-
       final finalPath = '$newBase.safetensors';
       setState(() { _newName = name; _step = _Step.done; });
       _loadVoices();
@@ -408,8 +271,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
       setState(() { _step = _Step.error; _errorMsg = 'Rename failed: $e'; });
     }
   }
-
-  // ── Active Flow UI ──
 
   Widget _activeFlow() {
     if (_step == _Step.countdown) return _countdownUI();
@@ -436,8 +297,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
           style: const TextStyle(fontSize: 64, fontWeight: FontWeight.w700, color: C.accent)),
       ),
       const SizedBox(height: 32),
-      TextButton(
-        onPressed: _cancelFlow,
+      TextButton(onPressed: _cancelFlow,
         style: TextButton.styleFrom(backgroundColor: C.level2,
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
@@ -459,38 +319,26 @@ class _VoiceScreenState extends State<VoiceScreen> {
             fontFeatures: [FontFeature.tabularFigures()])),
       ]),
       const SizedBox(height: 12),
-      ClipRRect(
-        borderRadius: BorderRadius.circular(4),
-        child: LinearProgressIndicator(
-          value: progress, minHeight: 4,
-          backgroundColor: C.level2, valueColor: AlwaysStoppedAnimation(C.accent)),
-      ),
+      ClipRRect(borderRadius: BorderRadius.circular(4),
+        child: LinearProgressIndicator(value: progress, minHeight: 4,
+          backgroundColor: C.level2, valueColor: AlwaysStoppedAnimation(C.accent))),
       const SizedBox(height: 24),
       Expanded(child: SingleChildScrollView(child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
         decoration: BoxDecoration(color: C.level1, borderRadius: BorderRadius.circular(16)),
-        child: Wrap(
-          spacing: 6, runSpacing: 6,
+        child: Wrap(spacing: 6, runSpacing: 6,
           children: List.generate(_words.length, (i) {
             final isPast = i < _highlightWord;
             final isCurrent = i == _highlightWord;
-            final active = isCurrent || isPast;
             return AnimatedContainer(
               duration: const Duration(milliseconds: 150),
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
-                color: isCurrent ? C.accent.withAlpha(30)
-                  : isPast ? C.level2
-                  : C.level2.withAlpha(80),
+                color: isCurrent ? C.accent.withAlpha(30) : isPast ? C.level2 : C.level2.withAlpha(80),
                 borderRadius: BorderRadius.circular(6)),
-              child: Text(_words[i],
-                style: TextStyle(
-                  fontSize: 16, height: 1.3,
-                  fontWeight: isCurrent ? FontWeight.w700 : FontWeight.w400,
-                  color: isCurrent ? C.accent
-                    : isPast ? C.textSub
-                    : C.textMuted.withAlpha(80),
-                )),
+              child: Text(_words[i], style: TextStyle(fontSize: 16, height: 1.3,
+                fontWeight: isCurrent ? FontWeight.w700 : FontWeight.w400,
+                color: isCurrent ? C.accent : isPast ? C.textSub : C.textMuted.withAlpha(80))),
             );
           }),
         ),
@@ -500,28 +348,22 @@ class _VoiceScreenState extends State<VoiceScreen> {
         Text('Read the text above at a comfortable pace',
           style: TextStyle(fontSize: 11, color: C.textMuted.withAlpha(120))),
         const SizedBox(width: 16),
-        TextButton(
-          onPressed: _cancelFlow,
+        TextButton(onPressed: _cancelFlow,
           style: TextButton.styleFrom(backgroundColor: C.level2,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
-          child: const Text('Cancel', style: TextStyle(color: C.textSub, fontSize: 11, fontWeight: FontWeight.w500)),
-        ),
+          child: const Text('Cancel', style: TextStyle(color: C.textSub, fontSize: 11, fontWeight: FontWeight.w500))),
       ]),
     ]);
   }
 
   Widget _processingUI() {
     return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-      SizedBox(width: 180, height: 180,
-        child: Lottie.asset('assets/vui-animation.json', fit: BoxFit.contain)),
+      SizedBox(width: 180, height: 180, child: Lottie.asset('assets/vui-animation.json', fit: BoxFit.contain)),
       const SizedBox(height: 16),
-      AnimatedSwitcher(
-        duration: const Duration(milliseconds: 400),
-        child: Text(_processingSteps[_processingStep],
-          key: ValueKey(_processingStep),
-          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: C.text)),
-      ),
+      AnimatedSwitcher(duration: const Duration(milliseconds: 400),
+        child: Text(_processingSteps[_processingStep], key: ValueKey(_processingStep),
+          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: C.text))),
     ]));
   }
 
@@ -532,46 +374,32 @@ class _VoiceScreenState extends State<VoiceScreen> {
       const SizedBox(height: 16),
       const Text('Voice recorded!', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: C.text)),
       const SizedBox(height: 8),
-      const Text('Give your voice a name to save it.',
-        style: TextStyle(fontSize: 13, color: C.textSub)),
+      const Text('Give your voice a name to save it.', style: TextStyle(fontSize: 13, color: C.textSub)),
       const SizedBox(height: 24),
       SizedBox(width: 260, child: TextField(
         controller: controller, autofocus: true,
-        style: const TextStyle(color: C.text, fontSize: 14),
-        textAlign: TextAlign.center,
-        onSubmitted: (v) {
-          final name = v.trim().toLowerCase().replaceAll(RegExp(r'[^a-z0-9_]'), '_');
-          if (name.isNotEmpty) _finalizeName(name);
-        },
-        decoration: InputDecoration(
-          hintText: 'e.g. My Voice',
+        style: const TextStyle(color: C.text, fontSize: 14), textAlign: TextAlign.center,
+        onSubmitted: (v) { final n = v.trim().toLowerCase().replaceAll(RegExp(r'[^a-z0-9_]'), '_'); if (n.isNotEmpty) _finalizeName(n); },
+        decoration: InputDecoration(hintText: 'e.g. My Voice',
           hintStyle: TextStyle(color: C.textMuted.withAlpha(100)),
           filled: true, fillColor: C.level1,
           border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
           enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
-          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
-        ),
+          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none)),
       )),
       const SizedBox(height: 16),
       Row(mainAxisSize: MainAxisSize.min, children: [
-        TextButton(
-          onPressed: () { _cancelFlow(); _cleanupTemp(_tempName, _generation); },
+        TextButton(onPressed: () { _cancelFlow(); _cleanupTemp(_tempName); },
           style: TextButton.styleFrom(backgroundColor: C.level2,
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
-          child: const Text('Discard', style: TextStyle(color: C.textSub, fontSize: 13, fontWeight: FontWeight.w500)),
-        ),
+          child: const Text('Discard', style: TextStyle(color: C.textSub, fontSize: 13, fontWeight: FontWeight.w500))),
         const SizedBox(width: 12),
-        TextButton(
-          onPressed: () {
-            final name = controller.text.trim().toLowerCase().replaceAll(RegExp(r'[^a-z0-9_]'), '_');
-            if (name.isNotEmpty) _finalizeName(name);
-          },
+        TextButton(onPressed: () { final n = controller.text.trim().toLowerCase().replaceAll(RegExp(r'[^a-z0-9_]'), '_'); if (n.isNotEmpty) _finalizeName(n); },
           style: TextButton.styleFrom(backgroundColor: C.accent.withAlpha(30),
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
-          child: const Text('Save', style: TextStyle(color: C.accent, fontSize: 13, fontWeight: FontWeight.w600)),
-        ),
+          child: const Text('Save', style: TextStyle(color: C.accent, fontSize: 13, fontWeight: FontWeight.w600))),
       ]),
     ]));
   }
@@ -584,11 +412,9 @@ class _VoiceScreenState extends State<VoiceScreen> {
       const SizedBox(height: 8),
       const Text('Your cloned voice is now active.', style: TextStyle(fontSize: 13, color: C.textSub)),
       const SizedBox(height: 24),
-      TextButton(
-        onPressed: () => setState(() { _step = _Step.idle; _loadVoices(); }),
+      TextButton(onPressed: () => setState(() { _step = _Step.idle; _loadVoices(); }),
         style: TextButton.styleFrom(backgroundColor: C.accent.withAlpha(30)),
-        child: const Text('Back to Voices', style: TextStyle(color: C.accent, fontWeight: FontWeight.w600)),
-      ),
+        child: const Text('Back to Voices', style: TextStyle(color: C.accent, fontWeight: FontWeight.w600))),
     ]));
   }
 
@@ -600,15 +426,11 @@ class _VoiceScreenState extends State<VoiceScreen> {
       const SizedBox(height: 8),
       Text(_errorMsg ?? 'Unknown error', style: const TextStyle(fontSize: 13, color: C.textSub), textAlign: TextAlign.center),
       const SizedBox(height: 24),
-      TextButton(
-        onPressed: () => setState(() { _step = _Step.idle; _loadVoices(); }),
+      TextButton(onPressed: () => setState(() { _step = _Step.idle; _loadVoices(); }),
         style: TextButton.styleFrom(backgroundColor: C.accent.withAlpha(30)),
-        child: const Text('Back to Voices', style: TextStyle(color: C.accent, fontWeight: FontWeight.w600)),
-      ),
+        child: const Text('Back to Voices', style: TextStyle(color: C.accent, fontWeight: FontWeight.w600))),
     ]));
   }
-
-  // ── Actions ──
 
   Future<void> _preview(String path) async {
     if (_previewingPath != null) return;
@@ -619,9 +441,7 @@ class _VoiceScreenState extends State<VoiceScreen> {
       final played = await playPreview(previewWavPath: cachedPreview);
       if (!played && mounted) {
         final result = await previewVoice(voicePath: path);
-        if (result.startsWith('ERROR') && mounted) {
-          setState(() => _errorMsg = result);
-        }
+        if (result.startsWith('ERROR') && mounted) setState(() => _errorMsg = result);
       }
     } catch (e) {
       if (mounted) setState(() => _errorMsg = 'Preview error: $e');
@@ -635,29 +455,24 @@ class _VoiceScreenState extends State<VoiceScreen> {
       backgroundColor: C.level3,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       title: Text('Delete "$name"?', style: const TextStyle(fontSize: 16, color: C.text)),
-      content: const Text('This will remove the voice permanently.',
-        style: TextStyle(fontSize: 13, color: C.textSub)),
+      content: const Text('This will remove the voice permanently.', style: TextStyle(fontSize: 13, color: C.textSub)),
       actions: [
         TextButton(onPressed: () => Navigator.pop(ctx),
           child: const Text('Cancel', style: TextStyle(color: C.textSub))),
-        TextButton(
-          onPressed: () async {
-            Navigator.pop(ctx);
-            await deleteVoice(voicePath: path);
-            if (_activePath == path) widget.onVoiceChanged('');
-            _loadVoices();
-          },
-          style: TextButton.styleFrom(backgroundColor: C.error.withAlpha(30)),
-          child: const Text('Delete', style: TextStyle(color: C.error, fontWeight: FontWeight.w600)),
-        ),
+        TextButton(onPressed: () async {
+          Navigator.pop(ctx);
+          await deleteVoice(voicePath: path);
+          if (_activePath == path) widget.onVoiceChanged('');
+          _loadVoices();
+        }, style: TextButton.styleFrom(backgroundColor: C.error.withAlpha(30)),
+          child: const Text('Delete', style: TextStyle(color: C.error, fontWeight: FontWeight.w600))),
       ],
     ));
   }
 
   Widget _errorBanner() {
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(12),
+      margin: const EdgeInsets.only(bottom: 12), padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(color: C.error.withAlpha(15), borderRadius: BorderRadius.circular(10)),
       child: Row(children: [
         const Icon(Icons.error_outline_rounded, color: C.error, size: 16),
@@ -674,8 +489,6 @@ class _VoiceScreenState extends State<VoiceScreen> {
   void dispose() { _timer?.cancel(); _processingTimer?.cancel(); super.dispose(); }
 }
 
-// ── Reusable widgets ──
-
 class _HoverCard extends StatefulWidget {
   final VoidCallback onTap;
   final Widget child;
@@ -689,21 +502,16 @@ class _HoverCardState extends State<_HoverCard> {
   bool _hovered = false;
   @override
   Widget build(BuildContext context) {
-    final bg = widget.isActive ? C.accent.withAlpha(12)
-      : _hovered ? C.level2 : C.level1;
+    final bg = widget.isActive ? C.accent.withAlpha(12) : _hovered ? C.level2 : C.level1;
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
       cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
+      child: GestureDetector(onTap: widget.onTap,
+        child: AnimatedContainer(duration: const Duration(milliseconds: 150),
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(12)),
-          child: widget.child,
-        ),
-      ),
+          child: widget.child)),
     );
   }
 }
@@ -728,22 +536,18 @@ class _SmallBtnState extends State<_SmallBtn> {
       cursor: widget.loading ? SystemMouseCursors.basic : SystemMouseCursors.click,
       child: Tooltip(message: widget.tooltip, child: GestureDetector(
         onTap: widget.loading ? null : widget.onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
+        child: AnimatedContainer(duration: const Duration(milliseconds: 150),
           padding: const EdgeInsets.all(6),
           decoration: BoxDecoration(
             color: _hovered ? C.level3 : Colors.transparent,
             borderRadius: BorderRadius.circular(8)),
           child: widget.loading
             ? const _Waveform(width: 16, height: 16, barCount: 3, color: C.textSub)
-            : Icon(widget.icon, size: 16, color: _hovered ? C.text : C.textSub),
-        ),
+            : Icon(widget.icon, size: 16, color: _hovered ? C.text : C.textSub)),
       )),
     );
   }
 }
-
-// ── Animated Waveform (replaces spinners) ──
 
 class _Waveform extends StatefulWidget {
   final double width, height;
@@ -756,37 +560,27 @@ class _Waveform extends StatefulWidget {
 
 class _WaveformState extends State<_Waveform> with SingleTickerProviderStateMixin {
   late final AnimationController _ctrl;
-
   @override
   void initState() {
     super.initState();
     _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 800))..repeat();
   }
-
   @override
   void dispose() { _ctrl.dispose(); super.dispose(); }
-
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _ctrl,
-      builder: (_, __) {
-        final gap = widget.width * 0.12 / (widget.barCount - 1).clamp(1, 99);
-        final barW = (widget.width - gap * (widget.barCount - 1)) / widget.barCount;
-        return SizedBox(width: widget.width, height: widget.height,
-          child: Row(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.end,
-            children: List.generate(widget.barCount, (i) {
-              final phase = i * 0.7;
-              final h = (0.3 + 0.7 * ((math.sin(_ctrl.value * 2 * math.pi + phase) + 1) / 2)) * widget.height;
-              return Padding(
-                padding: EdgeInsets.only(right: i < widget.barCount - 1 ? gap : 0),
-                child: Container(width: barW, height: h,
-                  decoration: BoxDecoration(color: widget.color, borderRadius: BorderRadius.circular(barW / 2))),
-              );
-            }),
-          ),
-        );
-      },
-    );
+    return AnimatedBuilder(animation: _ctrl, builder: (_, __) {
+      final gap = widget.width * 0.12 / (widget.barCount - 1).clamp(1, 99);
+      final barW = (widget.width - gap * (widget.barCount - 1)) / widget.barCount;
+      return SizedBox(width: widget.width, height: widget.height,
+        child: Row(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.end,
+          children: List.generate(widget.barCount, (i) {
+            final phase = i * 0.7;
+            final h = (0.3 + 0.7 * ((math.sin(_ctrl.value * 2 * math.pi + phase) + 1) / 2)) * widget.height;
+            return Padding(padding: EdgeInsets.only(right: i < widget.barCount - 1 ? gap : 0),
+              child: Container(width: barW, height: h,
+                decoration: BoxDecoration(color: widget.color, borderRadius: BorderRadius.circular(barW / 2))));
+          })));
+    });
   }
 }

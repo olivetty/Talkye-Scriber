@@ -66,14 +66,9 @@ Reply ONLY with CMD:name(s) or TEXT. Nothing else."""
 
 
 def detect_command(text: str) -> list[str] | None:
-    """Ask LLM if text is a voice command. Returns list of command IDs or None.
-
-    Tries local LLM first (Qwen3-1.7B), falls back to cloud LLM.
-    """
+    """Ask LLM if text is a voice command. Returns list of command IDs or None."""
     try:
-        answer = _detect_via_local(text)
-        if answer is None:
-            answer = _detect_via_cloud(text)
+        answer = _detect_via_cloud(text)
         if answer is None:
             return None
 
@@ -91,18 +86,6 @@ def detect_command(text: str) -> list[str] | None:
         return cmds if cmds else None
     except Exception as e:
         logger.warning("LLM command detection failed: %s", e)
-        return None
-
-
-def _detect_via_local(text: str) -> str | None:
-    """Try local LLM for command detection."""
-    try:
-        from llm_local import local_llm
-        if not local_llm.loaded and not local_llm.available:
-            return None
-        return local_llm.classify(_CMD_PROMPT, text, max_tokens=30)
-    except Exception as e:
-        logger.debug("Local LLM not available: %s", e)
         return None
 
 

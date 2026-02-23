@@ -59,9 +59,6 @@ Future<String> recordVoice({
 Future<String> precomputeVoice({required String wavPath}) =>
     RustLib.instance.api.crateApiEnginePrecomputeVoice(wavPath: wavPath);
 
-Future<String> prepareCbxVoice({required String wavPath}) =>
-    RustLib.instance.api.crateApiEnginePrepareCbxVoice(wavPath: wavPath);
-
 /// Preview a voice — generates TTS, saves preview WAV, plays it. Returns preview path.
 Future<String> previewVoice({required String voicePath}) =>
     RustLib.instance.api.crateApiEnginePreviewVoice(voicePath: voicePath);
@@ -78,6 +75,9 @@ Future<bool> deleteVoice({required String voicePath}) =>
 
 /// Get the project voices directory path.
 String voicesDir() => RustLib.instance.api.crateApiEngineVoicesDir();
+
+Future<List<FfiVoiceInfo>> listBuiltinVoices() =>
+    RustLib.instance.api.crateApiEngineListBuiltinVoices();
 
 class FfiAudioDevice {
   final String name;
@@ -110,17 +110,12 @@ class FfiEngineConfig {
   final String translateTo;
   final String voicePath;
   final double ttsSpeed;
-  final String ttsBackend;
   final String groqApiKey;
   final String deepgramApiKey;
   final String hfToken;
   final String parakeetModelDir;
   final String vadModelPath;
   final String audioOutput;
-  final double cbxExaggeration;
-  final double cbxCfgWeight;
-  final double cbxTemperature;
-  final int cbxContextWindow;
 
   const FfiEngineConfig({
     required this.sttBackend,
@@ -129,17 +124,12 @@ class FfiEngineConfig {
     required this.translateTo,
     required this.voicePath,
     required this.ttsSpeed,
-    required this.ttsBackend,
     required this.groqApiKey,
     required this.deepgramApiKey,
     required this.hfToken,
     required this.parakeetModelDir,
     required this.vadModelPath,
     required this.audioOutput,
-    required this.cbxExaggeration,
-    required this.cbxCfgWeight,
-    required this.cbxTemperature,
-    required this.cbxContextWindow,
   });
 
   @override
@@ -150,17 +140,12 @@ class FfiEngineConfig {
       translateTo.hashCode ^
       voicePath.hashCode ^
       ttsSpeed.hashCode ^
-      ttsBackend.hashCode ^
       groqApiKey.hashCode ^
       deepgramApiKey.hashCode ^
       hfToken.hashCode ^
       parakeetModelDir.hashCode ^
       vadModelPath.hashCode ^
-      audioOutput.hashCode ^
-      cbxExaggeration.hashCode ^
-      cbxCfgWeight.hashCode ^
-      cbxTemperature.hashCode ^
-      cbxContextWindow.hashCode;
+      audioOutput.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -173,17 +158,12 @@ class FfiEngineConfig {
           translateTo == other.translateTo &&
           voicePath == other.voicePath &&
           ttsSpeed == other.ttsSpeed &&
-          ttsBackend == other.ttsBackend &&
           groqApiKey == other.groqApiKey &&
           deepgramApiKey == other.deepgramApiKey &&
           hfToken == other.hfToken &&
           parakeetModelDir == other.parakeetModelDir &&
           vadModelPath == other.vadModelPath &&
-          audioOutput == other.audioOutput &&
-          cbxExaggeration == other.cbxExaggeration &&
-          cbxCfgWeight == other.cbxCfgWeight &&
-          cbxTemperature == other.cbxTemperature &&
-          cbxContextWindow == other.cbxContextWindow;
+          audioOutput == other.audioOutput;
 }
 
 @freezed

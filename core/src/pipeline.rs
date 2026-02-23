@@ -13,7 +13,6 @@ use tokio::sync::{mpsc, Semaphore};
 
 use crate::accumulator::{self, Accumulator};
 use crate::audio::capture::AudioCapture;
-use crate::audio::playback::AudioPlayback;
 use crate::config::Config;
 use crate::engine::EngineEvent;
 use crate::stt::{SttEvent, run_stt};
@@ -28,6 +27,28 @@ const SESSION_IDLE_MS: u64 = 2000;
 /// Don't split into clauses if message is shorter than this (words).
 /// Short messages sound better as a single TTS unit.
 const CLAUSE_SPLIT_MIN_WORDS: usize = 12;
+
+/// Find paplay binary — checks PATH first, then common locations.
+/// Flutter may launch the engine with a minimal PATH, so we fall back
+/// to well-known paths if `paplay` isn't found via PATH alone.
+fn find_paplay() -> Option<String> {
+    // Try PATH first
+    if std::process::Command::new("paplay")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
+        return Some("paplay".into());
+    }
+    // Fallback to common locations
+    for path in ["/usr/bin/paplay", "/usr/local/bin/paplay", "/bin/paplay"] {
+        if std::path::Path::new(path).exists() {
+            return Some(path.into());
+        }
+    }
+    None
+}
 
 pub struct Pipeline {
     config: Config,
@@ -74,10 +95,10 @@ impl Pipeline {
         }
 
         self.log("INFO", format!(
-            "Pipeline: STT (lang={}, backend={}) → Translate ({} → {}) → TTS (backend={}, voice={}, speed={}x)",
+            "Pipeline: STT (lang={}, backend={}) → Translate ({} → {}) → TTS (voice={}, speed={}x)",
             self.config.stt.language, self.config.stt.backend,
             self.config.translate.from_lang, self.config.translate.to_lang,
-            self.config.tts.backend, self.config.tts.voice, self.config.tts.speed,
+            self.config.tts.voice, self.config.tts.speed,
         ));
         self.log("INFO", format!(
             "Accumulator: first flush at {}w, then {}w",
@@ -131,11 +152,6 @@ impl Pipeline {
             speed: self.config.tts.speed,
             output_device: self.config.tts.output_device.clone(),
             language: self.config.tts.language.clone(),
-            backend: self.config.tts.backend.clone(),
-            cbx_exaggeration: self.config.tts.cbx_exaggeration,
-            cbx_cfg_weight: self.config.tts.cbx_cfg_weight,
-            cbx_temperature: self.config.tts.cbx_temperature,
-            cbx_context_window: self.config.tts.cbx_context_window,
         };
         let tts_event_tx = self.event_tx.clone();
         std::thread::spawn(move || {
@@ -222,11 +238,12 @@ impl Pipeline {
         Ok(())
     }
 
-    /// TTS thread — session reuse for gapless playback.
+    /// TTS thread — generates audio via TTS backend, streams to paplay.
     ///
-    /// One cpal stream is kept alive across multiple TTS messages. The stream
-    /// outputs silence between messages (zero overhead). Only destroyed after
-    /// SESSION_IDLE_MS of no new messages (utterance boundary).
+    /// Uses paplay (PulseAudio CLI) instead of cpal for reliable Linux audio.
+    /// cpal had sample rate mismatches and buffer underruns causing distortion.
+    /// Streams PCM chunks directly to paplay stdin as they arrive from TTS —
+    /// audio starts playing at first chunk, generation continues in parallel.
     fn tts_thread(
         tts_config: crate::config::TtsConfig,
         event_tx: mpsc::Sender<EngineEvent>,
@@ -265,19 +282,15 @@ impl Pipeline {
             }
         };
 
-        let mut playback = match AudioPlayback::new(tts_config.output_device.as_deref()) {
-            Ok(p) => {
-                log("INFO", format!("[TTS] playback ready (output={:?})", tts_config.output_device));
-                p
-            }
-            Err(e) => {
-                log("ERROR", format!("[TTS] playback init failed: {e:#}"));
-                let _ = event_tx.blocking_send(EngineEvent::Error {
-                    message: format!("TTS playback init failed: {e:#}"),
-                });
+        // Verify paplay is available
+        let paplay_bin = match find_paplay() {
+            Some(p) => p,
+            None => {
+                log("ERROR", "[TTS] paplay not found — install pulseaudio-utils".into());
                 return;
             }
         };
+        log("INFO", format!("[TTS] playback ready (paplay={}, sr={})", paplay_bin, tts.playback_rate()));
 
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all().build().unwrap();
@@ -285,29 +298,35 @@ impl Pipeline {
         rt.block_on(async {
             log("INFO", "[TTS] ready, waiting for messages".into());
 
-            let mut session: Option<crate::audio::playback::PlaybackSession> = None;
+            // Persistent paplay process — stays alive across messages for gapless playback.
+            // We keep writing PCM to its stdin. Only killed on idle timeout or shutdown.
+            let mut paplay_child: Option<std::process::Child> = None;
             let idle_timeout = tokio::time::Duration::from_millis(SESSION_IDLE_MS);
 
             loop {
-                let text = if session.is_some() {
-                    // Active session — wait with timeout for next message
+                let text = if paplay_child.is_some() {
                     match tokio::time::timeout(idle_timeout, tts_rx.recv()).await {
                         Ok(Some(t)) => t,
                         Ok(None) => {
-                            // Channel closed — finish session and exit
-                            log("INFO", "[TTS] channel closed, finishing session".into());
-                            if let Some(s) = session.take() { s.finish(); }
+                            log("INFO", "[TTS] channel closed, thread exiting".into());
+                            // Close stdin → paplay finishes naturally
+                            if let Some(mut c) = paplay_child.take() {
+                                c.stdin.take();
+                                let _ = c.wait();
+                            }
                             break;
                         }
                         Err(_) => {
-                            // Idle timeout — finish session (utterance boundary)
                             log("INFO", "[TTS] session idle timeout — finishing stream".into());
-                            if let Some(s) = session.take() { s.finish(); }
+                            // Close stdin → paplay drains remaining audio and exits
+                            if let Some(mut c) = paplay_child.take() {
+                                c.stdin.take();
+                                let _ = c.wait();
+                            }
                             continue;
                         }
                     }
                 } else {
-                    // No active session — block until next message
                     match tts_rx.recv().await {
                         Some(t) => t,
                         None => {
@@ -317,7 +336,7 @@ impl Pipeline {
                     }
                 };
 
-                // Drain queued messages — never drop content
+                // Drain queued messages
                 let mut combined = text;
                 let mut drained_count = 0u32;
                 while let Ok(next) = tts_rx.try_recv() {
@@ -329,21 +348,24 @@ impl Pipeline {
                     log("INFO", format!("[TTS] merged {drained_count} queued message(s)"));
                 }
 
-                // Ensure session exists
-                if session.is_none() {
-                    match playback.stream(tts.playback_rate()) {
-                        Ok(s) => {
-                            log("INFO", "[TTS] new playback session created".into());
-                            session = Some(s);
+                // Ensure paplay session exists (reuse across messages for gapless audio)
+                if paplay_child.is_none() {
+                    let sr = tts.playback_rate().to_string();
+                    match std::process::Command::new(&paplay_bin)
+                        .args(["--format=s16le", &format!("--rate={sr}"), "--channels=1", "--raw"])
+                        .stdin(std::process::Stdio::piped())
+                        .spawn()
+                    {
+                        Ok(child) => {
+                            log("INFO", "[TTS] new paplay session started".into());
+                            paplay_child = Some(child);
                         }
                         Err(e) => {
-                            log("ERROR", format!("[TTS] playback stream error: {e:#}"));
+                            log("ERROR", format!("[TTS] paplay spawn failed: {e}"));
                             continue;
                         }
                     }
                 }
-
-                let sess = session.as_ref().unwrap();
 
                 // Split into clauses only for longer messages
                 let word_count = combined.split_whitespace().count();
@@ -358,28 +380,71 @@ impl Pipeline {
                 let t0 = std::time::Instant::now();
                 let mut first_chunk_ms = 0u64;
                 let mut first = true;
+                let mut chunk_count = 0u32;
+                let mut total_samples = 0usize;
+                let mut write_error = false;
 
                 for (i, clause) in clauses.iter().enumerate() {
                     log("INFO", format!("[TTS] generating clause {}/{n}: \"{clause}\"", i + 1));
                     match tts.generate_stream(clause, &tts_config.language, &mut |chunk| {
+                        chunk_count += 1;
+                        total_samples += chunk.len();
+                        let elapsed = t0.elapsed().as_millis();
+                        let chunk_dur_ms = chunk.len() as u64 * 1000 / tts.playback_rate() as u64;
+                        let total_dur_ms = total_samples as u64 * 1000 / tts.playback_rate() as u64;
                         if first {
-                            first_chunk_ms = t0.elapsed().as_millis() as u64;
+                            first_chunk_ms = elapsed as u64;
                             first = false;
+                            log("INFO", format!(
+                                "[TTS] chunk#{chunk_count}: {} samples ({chunk_dur_ms}ms audio), first_chunk={elapsed}ms",
+                                chunk.len()
+                            ));
+                        } else if chunk_count <= 5 || chunk_count % 10 == 0 {
+                            log("INFO", format!(
+                                "[TTS] chunk#{chunk_count}: {} samples ({chunk_dur_ms}ms), total={total_samples} ({total_dur_ms}ms audio), wall={elapsed}ms",
+                                chunk.len()
+                            ));
                         }
-                        sess.push(chunk);
+                        // Stream directly to paplay stdin — audio plays while we generate
+                        if !write_error {
+                            if let Some(ref mut child) = paplay_child {
+                                if let Some(ref mut stdin) = child.stdin {
+                                    use std::io::Write;
+                                    let mut buf = Vec::with_capacity(chunk.len() * 2);
+                                    for &s in chunk {
+                                        let val = (s * 32767.0).clamp(-32768.0, 32767.0) as i16;
+                                        buf.extend_from_slice(&val.to_le_bytes());
+                                    }
+                                    if stdin.write_all(&buf).is_err() {
+                                        write_error = true;
+                                    }
+                                }
+                            }
+                        }
                     }) {
                         Ok((fc, tot)) => {
-                            log("INFO", format!("[TTS] clause {}/{n} done: fc={fc}ms tot={tot}ms", i + 1));
+                            let total_dur_ms = total_samples as u64 * 1000 / tts.playback_rate() as u64;
+                            log("INFO", format!(
+                                "[TTS] clause {}/{n} done: fc={fc}ms tot={tot}ms chunks={chunk_count} samples={total_samples} ({total_dur_ms}ms audio)",
+                                i + 1
+                            ));
                         }
                         Err(e) => log("ERROR", format!("[TTS] clause {}/{n} error: {e:#}", i + 1)),
                     }
                 }
 
-                // Signal end of this message (starts playback if pre-buffer wasn't reached)
-                sess.end_message();
+                // If paplay died mid-stream, clean up
+                if write_error {
+                    log("WARN", "[TTS] paplay write error — restarting session".into());
+                    if let Some(mut c) = paplay_child.take() {
+                        let _ = c.kill();
+                        let _ = c.wait();
+                    }
+                }
 
                 let total_ms = t0.elapsed().as_millis();
-                log("INFO", format!("[TTS] total: first_chunk={first_chunk_ms}ms total={total_ms}ms"));
+                let dur_ms = total_samples as u64 * 1000 / tts.playback_rate() as u64;
+                log("INFO", format!("[TTS] total: first_chunk={first_chunk_ms}ms total={total_ms}ms audio={dur_ms}ms"));
             }
         });
     }

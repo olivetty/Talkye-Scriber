@@ -12,6 +12,10 @@ default = []
 name = "talkye"
 path = "src/main.rs"
 
+[[bin]]
+name = "tts_server"
+path = "src/bin/tts_server.rs"
+
 [dependencies]
 # Async runtime
 tokio = { version = "1", features = ["full"] }

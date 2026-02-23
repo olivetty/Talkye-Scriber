@@ -86,66 +86,28 @@ def _run_desktop():
 
 @app.on_event("startup")
 async def startup():
-    """Start desktop PTT on server startup."""
+    """Start desktop PTT and TTS server on startup."""
     global _desktop_thread
     _desktop_thread = threading.Thread(target=_run_desktop, daemon=True, name="desktop-ptt")
     _desktop_thread.start()
     logger.info("Desktop PTT thread started")
+    # Start persistent TTS server in background
+    threading.Thread(target=_start_tts_server, daemon=True, name="tts-init").start()
 
 
-@app.on_event("startup")
-async def auto_load_chatterbox():
-    """Auto-load Chatterbox if selected in settings, then warm up."""
-    def _load():
-        try:
-            from tts import get_backend_from_settings
-            if get_backend_from_settings() != "chatterbox":
-                return
-            from tts_chatterbox import chatterbox_tts
-            if chatterbox_tts.available:
-                logger.info("Auto-loading Chatterbox (selected in settings)...")
-                if chatterbox_tts.load():
-                    # Warm up CUDA kernels so first real generation is fast
-                    chatterbox_tts.warmup()
-        except Exception as e:
-            logger.info("Chatterbox auto-load skipped: %s", e)
-    threading.Thread(target=_load, daemon=True, name="cbx-autoload").start()
-    # Start health monitor for chatterbox worker
-    asyncio.create_task(_monitor_chatterbox_worker())
-
-
-async def _monitor_chatterbox_worker():
-    """Periodic health check for the Chatterbox worker (port 8180)."""
-    import urllib.request
-    _consecutive_failures = 0
-    while True:
-        await asyncio.sleep(30)
-        try:
-            def _check():
-                req = urllib.request.Request("http://127.0.0.1:8180/health")
-                with urllib.request.urlopen(req, timeout=3) as resp:
-                    return resp.status == 200
-            ok = await asyncio.get_event_loop().run_in_executor(None, _check)
-            if ok:
-                _consecutive_failures = 0
-            else:
-                _consecutive_failures += 1
-        except Exception:
-            _consecutive_failures += 1
-        if _consecutive_failures >= 3:
-            logger.warning("[MONITOR] Chatterbox worker unreachable (%d consecutive failures)", _consecutive_failures)
-            _consecutive_failures = 0  # Reset to avoid log spam
+def _start_tts_server():
+    """Initialize persistent TTS server."""
+    from tts import ensure_server
+    if ensure_server():
+        logger.info("Persistent TTS server ready")
+    else:
+        logger.warning("TTS server failed to start")
 
 
 @app.on_event("shutdown")
 async def shutdown():
-    """Stop Chatterbox worker on server shutdown."""
-    try:
-        from tts_chatterbox import chatterbox_tts
-        if chatterbox_tts.worker_running:
-            chatterbox_tts.unload()
-    except Exception:
-        pass
+    from tts import shutdown as tts_shutdown
+    tts_shutdown()
 
 
 # ── Health ──
@@ -157,7 +119,7 @@ def health():
         "version": "0.1.0",
         "services": {
             "dictate": _desktop_running,
-            "tts": False,  # future: Chatterbox
+            "tts": False,
         },
     }
 
@@ -347,101 +309,21 @@ def wakeword_clear_samples():
     return {"ok": True}
 
 
-# ── Local LLM ──
-# LLM is loaded on-demand when user enters Chat screen,
-# and unloaded when they leave. Saves ~3.4GB VRAM.
-
-
-@app.get("/llm/status")
-def llm_status():
-    """Local LLM status."""
-    try:
-        from llm_local import local_llm, _MODEL_PATH
-        # Check if llama-cpp-python is installed
-        try:
-            import llama_cpp
-            lib_installed = True
-        except ImportError:
-            lib_installed = False
-        return {
-            "available": local_llm.available,
-            "loaded": local_llm.loaded,
-            "model_path": _MODEL_PATH,
-            "lib_installed": lib_installed,
-        }
-    except ImportError:
-        return {"available": False, "loaded": False, "model_path": "", "lib_installed": False}
-
-
-@app.post("/llm/load")
-def llm_load():
-    """Load LLM into GPU memory (called when entering Chat screen)."""
-    try:
-        from llm_local import local_llm
-        if local_llm.loaded:
-            return {"ok": True, "message": "Already loaded"}
-        if not local_llm.available:
-            return {"ok": False, "error": "Model not downloaded"}
-        ok = local_llm.load()
-        return {"ok": ok}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-
-
-@app.post("/llm/unload")
-def llm_unload():
-    """Unload LLM from GPU memory (called when leaving Chat screen)."""
-    try:
-        from llm_local import local_llm
-        local_llm.unload()
-        return {"ok": True}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-
-
-class LLMDownloadRequest(BaseModel):
-    pass
-
-
-@app.post("/llm/download")
-def llm_download():
-    """Download the Qwen3-1.7B GGUF model."""
-    from llm_local import download_model, local_llm
-    ok = download_model()
-    if ok:
-        # Auto-load after download
-        import threading
-        threading.Thread(target=local_llm.load, daemon=True).start()
-    return {"ok": ok}
-
-
 class ChatRequest(BaseModel):
     message: str
     history: list = []
     system_prompt: str | None = None
     enable_thinking: bool = False
     stream: bool = True
-    model: str = "local"  # "local" or a Groq model ID
+    model: str = "llama-3.3-70b-versatile"  # Groq model ID
 
 
 @app.get("/chat/models")
 def chat_models():
-    """List available chat models."""
+    """List available chat models (Groq cloud only)."""
     from llm_groq import GROQ_MODELS, groq_available
-    from llm_local import local_llm
 
     models = []
-    # Local model (free, offline)
-    models.append({
-        "id": "local",
-        "label": "Qwen3 1.7B",
-        "description": "Local · Free · Offline",
-        "available": local_llm.available,
-        "loaded": local_llm.loaded,
-        "supports_thinking": True,
-        "cloud": False,
-    })
-    # Groq cloud models
     has_key = groq_available()
     for model_id, info in GROQ_MODELS.items():
         models.append({
@@ -449,7 +331,7 @@ def chat_models():
             "label": info["label"],
             "description": info["description"],
             "available": has_key,
-            "loaded": True,  # cloud models are always "loaded"
+            "loaded": True,
             "supports_thinking": info["supports_thinking"],
             "cloud": True,
         })
@@ -458,46 +340,8 @@ def chat_models():
 
 @app.post("/chat")
 async def chat_endpoint(req: ChatRequest):
-    """Chat with local or cloud LLM. Supports streaming via SSE."""
-
-    # Route to Groq cloud if not local
-    if req.model != "local":
-        return await _chat_groq(req)
-
-    # Local LLM
-    from llm_local import local_llm
-
-    if not local_llm.loaded:
-        if not local_llm.load():
-            return {"error": "Local LLM not available. Download the model first."}
-
-    if req.stream:
-        def generate():
-            try:
-                for token in local_llm.chat_stream(
-                    user_message=req.message,
-                    system_prompt=req.system_prompt,
-                    history=req.history,
-                    enable_thinking=req.enable_thinking,
-                ):
-                    yield f"data: {json.dumps({'token': token})}\n\n"
-                yield "data: [DONE]\n\n"
-            except Exception as e:
-                logger.exception("Chat stream error: %s", e)
-                yield f"data: {json.dumps({'error': str(e)})}\n\n"
-
-        return StreamingResponse(generate(), media_type="text/event-stream")
-    else:
-        try:
-            response = local_llm.chat(
-                user_message=req.message,
-                system_prompt=req.system_prompt,
-                history=req.history,
-                enable_thinking=req.enable_thinking,
-            )
-            return {"response": response}
-        except Exception as e:
-            return {"error": str(e)}
+    """Chat with Groq cloud LLM. Supports streaming via SSE."""
+    return await _chat_groq(req)
 
 
 async def _chat_groq(req: ChatRequest):
@@ -537,158 +381,25 @@ _voice_chat = None  # VoiceChat instance (singleton)
 @app.get("/voice-chat/status")
 def voice_chat_status():
     """Voice chat status."""
-    from tts import is_available as tts_ok, pocket_available, chatterbox_available, \
-        get_backend_from_settings
+    from tts import is_available as tts_ok, pocket_available, _server_ready
     return {
         "running": _voice_chat is not None and _voice_chat.running,
         "tts_available": tts_ok(),
-        "tts_backend": get_backend_from_settings(),
         "pocket_available": pocket_available(),
-        "chatterbox_available": chatterbox_available(),
+        "tts_server_ready": _server_ready,
     }
 
 
 @app.get("/tts/status")
 def tts_status():
-    """TTS backends status and GPU info."""
-    from tts import pocket_available, chatterbox_available, get_backend_from_settings
-    result = {
-        "active_backend": get_backend_from_settings(),
+    """TTS status."""
+    from tts import pocket_available, _server_ready, _current_voice
+    return {
+        "active_backend": "pocket",
         "pocket": {"available": pocket_available()},
-        "chatterbox": {"installed": False, "available": False, "loaded": False, "gpu": None},
+        "server_running": _server_ready,
+        "current_voice": _current_voice,
     }
-    try:
-        from tts_chatterbox import chatterbox_tts
-        result["chatterbox"] = chatterbox_tts.status()
-    except ImportError:
-        pass
-    return result
-
-
-@app.get("/tts/memory")
-def tts_memory():
-    """Proxy to Chatterbox worker /memory endpoint for VRAM/RAM stats."""
-    import urllib.request
-    try:
-        req = urllib.request.Request("http://127.0.0.1:8180/memory")
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            return json.loads(resp.read())
-    except Exception as e:
-        return {"error": str(e), "gpu": None, "ram": None}
-
-
-@app.post("/tts/install-chatterbox")
-def install_chatterbox():
-    """Install Chatterbox TTS in a separate Python 3.11 venv via uv."""
-    import subprocess as sp
-    import shutil
-    sidecar_dir = os.path.dirname(os.path.abspath(__file__))
-    cbx_venv = os.path.join(sidecar_dir, "venv-chatterbox")
-    cbx_python = os.path.join(cbx_venv, "bin", "python")
-
-    # Already installed?
-    if os.path.isfile(cbx_python):
-        try:
-            r = sp.run([cbx_python, "-c", "import chatterbox; print('ok')"],
-                       capture_output=True, text=True, timeout=10)
-            if r.returncode == 0 and "ok" in r.stdout:
-                return {"ok": True, "output": "chatterbox-tts already installed"}
-        except Exception:
-            pass
-
-    # Find uv
-    uv = shutil.which("uv")
-    if not uv:
-        for p in [os.path.expanduser("~/.local/bin/uv"),
-                   os.path.expanduser("~/.cargo/bin/uv")]:
-            if os.path.isfile(p):
-                uv = p
-                break
-    if not uv:
-        return {"ok": False, "error": "uv not found. Install: curl -LsSf https://astral.sh/uv/install.sh | sh"}
-
-    output_lines = []
-
-    def run(cmd, timeout=300):
-        r = sp.run(cmd, capture_output=True, text=True, timeout=timeout)
-        output_lines.append(f"$ {' '.join(cmd)}")
-        if r.stdout.strip():
-            output_lines.append(r.stdout.strip()[-200:])
-        if r.stderr.strip():
-            output_lines.append(r.stderr.strip()[-200:])
-        return r.returncode == 0
-
-    try:
-        # Create venv with Python 3.11
-        if not os.path.isfile(cbx_python):
-            if not run([uv, "venv", cbx_venv, "--python", "3.11"]):
-                return {"ok": False, "error": "Failed to create Python 3.11 venv",
-                        "output": "\n".join(output_lines)}
-
-        # Detect GPU for PyTorch variant
-        from tts_chatterbox import detect_gpu
-        gpu = detect_gpu()
-
-        if gpu["backend"] == "cuda":
-            run([uv, "pip", "install", "--python", cbx_python,
-                 "torch", "torchaudio",
-                 "--index-url", "https://download.pytorch.org/whl/cu124"], timeout=600)
-        elif gpu["backend"] == "rocm":
-            run([uv, "pip", "install", "--python", cbx_python,
-                 "torch", "torchaudio",
-                 "--index-url", "https://download.pytorch.org/whl/rocm6.2"], timeout=600)
-        elif gpu["backend"] == "mps":
-            run([uv, "pip", "install", "--python", cbx_python,
-                 "torch", "torchaudio"], timeout=600)
-        else:
-            return {"ok": False, "error": "No GPU detected",
-                    "output": "\n".join(output_lines)}
-
-        # Install chatterbox-tts + server deps
-        run([uv, "pip", "install", "--python", cbx_python,
-             "chatterbox-tts", "fastapi", "uvicorn[standard]", "setuptools<81"], timeout=600)
-
-        # Verify
-        r = sp.run([cbx_python, "-c", "import chatterbox; print('ok')"],
-                   capture_output=True, text=True, timeout=10)
-        ok = r.returncode == 0 and "ok" in r.stdout
-        output_lines.append("chatterbox-tts installed OK" if ok else "verification failed")
-        # Invalidate installed cache so status reflects the change
-        if ok:
-            try:
-                from tts_chatterbox import chatterbox_tts
-                chatterbox_tts.invalidate_cache()
-            except Exception:
-                pass
-        return {"ok": ok, "output": "\n".join(output_lines)[-500:]}
-
-    except Exception as e:
-        return {"ok": False, "error": str(e),
-                "output": "\n".join(output_lines)[-500:]}
-
-
-@app.post("/tts/load-chatterbox")
-def load_chatterbox():
-    """Start Chatterbox worker and load model into GPU memory."""
-    try:
-        from tts_chatterbox import chatterbox_tts
-        if not chatterbox_tts.available:
-            return {"ok": False, "error": "Chatterbox not available (no GPU or not installed)"}
-        ok = chatterbox_tts.load()
-        return {"ok": ok, "status": chatterbox_tts.status()}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-
-
-@app.post("/tts/unload-chatterbox")
-def unload_chatterbox():
-    """Unload Chatterbox model and stop worker — frees VRAM + RAM."""
-    try:
-        from tts_chatterbox import chatterbox_tts
-        chatterbox_tts.unload()
-        return {"ok": True}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
 
 
 class TtsTestRequest(BaseModel):
@@ -699,16 +410,14 @@ class TtsTestRequest(BaseModel):
 @app.post("/tts/test")
 def tts_test(req: TtsTestRequest):
     """Test TTS — generate and play a short phrase."""
-    from tts import speak, get_backend_from_settings
+    from tts import speak
     import threading
-
-    backend = get_backend_from_settings()
 
     def _play():
         speak(req.text, language_id=req.language_id)
 
     threading.Thread(target=_play, daemon=True, name="tts-test").start()
-    return {"ok": True, "backend": backend, "text": req.text, "language_id": req.language_id}
+    return {"ok": True, "backend": "pocket", "text": req.text, "language_id": req.language_id}
 
 
 @app.websocket("/voice-chat")
@@ -755,10 +464,9 @@ async def voice_chat_ws(ws: WebSocket):
                     _voice_chat.stop()
                 from voice_chat import VoiceChat
                 model = data.get("model", "local")
-                language = data.get("language", "en")
-                _voice_chat = VoiceChat(on_event=_on_event, model=model, language=language)
+                _voice_chat = VoiceChat(on_event=_on_event, model=model)
                 _voice_chat.start()
-                logger.info("Voice chat started via WebSocket (model=%s, lang=%s)", model, language)
+                logger.info("Voice chat started via WebSocket (model=%s)", model)
 
             elif action == "stop":
                 if _voice_chat and _voice_chat.running:

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../theme.dart';
 import '../main.dart';
+import '../voice_names.dart';
 import '../src/rust/api/engine.dart';
 
 // Languages supported for source (input) — autodetect + specific
@@ -27,8 +28,6 @@ const _sourceLangs = [
 ];
 
 // Languages supported for target (output)
-// When using Chatterbox backend, all 23 languages have voice cloning.
-// When using Pocket backend, only English has voice cloning.
 const _targetLangs = [
   ('English', 'English'),
   ('Romanian', 'Romanian'),
@@ -83,16 +82,16 @@ class InterpreterScreenState extends State<InterpreterScreen> {
     _loadVoices();
   }
 
-  void _loadVoices() {
+  void _loadVoices() async {
+    final builtins = await listBuiltinVoices();
     final custom = listVoices();
-    final builtinDir = '${voicesDir()}/builtin';
     final voices = <_VoiceOption>[
-      _VoiceOption(name: 'Cosette', path: '$builtinDir/cosette.safetensors', builtin: true),
-      _VoiceOption(name: 'Marius', path: '$builtinDir/marius.safetensors', builtin: true),
+      for (final v in builtins)
+        _VoiceOption(name: v.name, path: v.path, builtin: true),
       for (final v in custom)
         _VoiceOption(name: v.name, path: v.path, builtin: false),
     ];
-    setState(() => _voices = voices);
+    if (mounted) setState(() => _voices = voices);
   }
 
   /// Restart engine with updated settings (e.g. voice changed).
@@ -118,13 +117,9 @@ class InterpreterScreenState extends State<InterpreterScreen> {
       translateFrom: widget.settings.sourceLang.isEmpty ? '' : widget.settings.sourceLang,
       translateTo: widget.settings.targetLang,
       voicePath: widget.settings.activeVoicePath,
-      ttsSpeed: 0, ttsBackend: widget.settings.ttsBackend,
+      ttsSpeed: 0,
       groqApiKey: '', deepgramApiKey: '',
       hfToken: '', parakeetModelDir: '', vadModelPath: '', audioOutput: '',
-      cbxExaggeration: widget.settings.cbxExaggeration,
-      cbxCfgWeight: widget.settings.cbxCfgWeight,
-      cbxTemperature: widget.settings.cbxTemperature,
-      cbxContextWindow: widget.settings.cbxContextWindow,
     )).listen(
       (event) {
         if (!mounted) return;
@@ -215,31 +210,12 @@ class InterpreterScreenState extends State<InterpreterScreen> {
           locked: locked,
           onChanged: (v) => setState(() {
             widget.settings.targetLang = v;
-            // Auto-switch to chatterbox for non-English, pocket only does English
-            if (v != 'English' && widget.settings.ttsBackend == 'pocket') {
-              widget.settings.ttsBackend = 'chatterbox';
-            }
             widget.settings.save();
           }),
         ),
         Padding(padding: const EdgeInsets.only(left: 8),
           child: _voiceDropdown(locked)),
         const Spacer(),
-        _dropdown(
-          value: widget.settings.ttsBackend,
-          items: const [('pocket', 'Pocket (CPU)'), ('chatterbox', 'Chatterbox (GPU)')],
-          locked: locked,
-          onChanged: (v) => setState(() {
-            widget.settings.ttsBackend = v;
-            // Pocket only supports English
-            if (v == 'pocket' && widget.settings.targetLang != 'English') {
-              widget.settings.targetLang = 'English';
-            }
-            widget.settings.save();
-          }),
-          small: true,
-        ),
-        const SizedBox(width: 8),
         _dropdown(
           value: widget.settings.sttBackend,
           items: const [('parakeet', 'Talkye Local'), ('deepgram', 'Talkye Max')],
@@ -359,10 +335,13 @@ class InterpreterScreenState extends State<InterpreterScreen> {
     final activePath = widget.settings.activeVoicePath;
     String activeLabel = 'No voice';
     for (final v in _voices) {
-      if (v.path == activePath) { activeLabel = v.name; break; }
+      if (v.path == activePath) {
+        activeLabel = v.builtin ? voiceDisplayName(v.name) : v.name;
+        break;
+      }
     }
-    // Capitalize first letter
-    if (activeLabel.isNotEmpty && activeLabel != 'No voice') {
+    // Capitalize first letter for custom voices
+    if (activeLabel.isNotEmpty && activeLabel != 'No voice' && !activeLabel.contains(' ')) {
       activeLabel = activeLabel[0].toUpperCase() + activeLabel.substring(1);
     }
 
@@ -384,11 +363,12 @@ class InterpreterScreenState extends State<InterpreterScreen> {
           items.add(const PopupMenuItem<String>(enabled: false, height: 22,
             child: Text('STANDARD', style: TextStyle(fontSize: 9, color: C.textMuted, fontWeight: FontWeight.w600, letterSpacing: 1))));
           for (final v in builtins) {
+            final label = voiceDisplayName(v.name);
             items.add(PopupMenuItem(value: v.path, height: 34, child: Row(children: [
               Icon(v.path == activePath ? Icons.radio_button_checked_rounded : Icons.radio_button_off_rounded,
                 size: 13, color: v.path == activePath ? C.accent : C.textMuted),
               const SizedBox(width: 6),
-              Text(v.name, style: TextStyle(fontSize: 12, color: v.path == activePath ? C.accent : C.text,
+              Text(label, style: TextStyle(fontSize: 12, color: v.path == activePath ? C.accent : C.text,
                 fontWeight: v.path == activePath ? FontWeight.w600 : FontWeight.w400)),
             ])));
           }

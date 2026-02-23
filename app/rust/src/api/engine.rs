@@ -49,18 +49,12 @@ pub struct FfiEngineConfig {
     pub translate_to: String,
     pub voice_path: String,
     pub tts_speed: f32,
-    pub tts_backend: String,
     pub groq_api_key: String,
     pub deepgram_api_key: String,
     pub hf_token: String,
     pub parakeet_model_dir: String,
     pub vad_model_path: String,
     pub audio_output: String,
-    // Chatterbox quality parameters
-    pub cbx_exaggeration: f64,
-    pub cbx_cfg_weight: f64,
-    pub cbx_temperature: f64,
-    pub cbx_context_window: i32,
 }
 
 // ── Helpers ──
@@ -134,7 +128,6 @@ pub fn start_engine(config: FfiEngineConfig, sink: StreamSink<FfiEngineEvent>) {
         let deepgram_key = env_fb(&config.deepgram_api_key, "DEEPGRAM_API_KEY");
         let hf_token = env_fb(&config.hf_token, "HF_TOKEN");
         let voice = env_fb(&config.voice_path, "POCKET_VOICE");
-        let tts_backend = env_fb(&config.tts_backend, "TTS_BACKEND");
         let parakeet_dir = env_fb(&config.parakeet_model_dir, "PARAKEET_MODEL");
         let vad_path = env_fb(&config.vad_model_path, "VAD_MODEL");
         let audio_output = env_fb(&config.audio_output, "AUDIO_OUTPUT");
@@ -174,11 +167,6 @@ pub fn start_engine(config: FfiEngineConfig, sink: StreamSink<FfiEngineEvent>) {
                 speed,
                 output_device: opt(audio_output),
                 language: if to_lang.is_empty() { "English".into() } else { to_lang },
-                backend: if tts_backend.is_empty() { "pocket".into() } else { tts_backend },
-                cbx_exaggeration: if config.cbx_exaggeration >= 0.0 { config.cbx_exaggeration } else { 0.5 },
-                cbx_cfg_weight: if config.cbx_cfg_weight >= 0.0 { config.cbx_cfg_weight } else { 0.5 },
-                cbx_temperature: if config.cbx_temperature > 0.0 { config.cbx_temperature } else { 0.8 },
-                cbx_context_window: if config.cbx_context_window > 0 { config.cbx_context_window } else { 50 },
             },
             audio: talkye_core::config::AudioConfig {
                 source: None,
@@ -260,6 +248,15 @@ pub fn start_engine(config: FfiEngineConfig, sink: StreamSink<FfiEngineEvent>) {
             });
         });
         // Runtime drops here — all tasks cleaned up
+
+        // Force glibc to return freed memory to the OS.
+        // Without this, the ~2.3GB Parakeet model stays in RSS after drop.
+        #[cfg(target_os = "linux")]
+        {
+            extern "C" { fn malloc_trim(pad: usize) -> i32; }
+            let freed = unsafe { malloc_trim(0) };
+            tracing::info!("[FFI] malloc_trim returned {freed} (1=trimmed)");
+        }
     });
 }
 
@@ -363,14 +360,6 @@ pub fn precompute_voice(wav_path: String) -> String {
     }
 }
 
-pub fn prepare_cbx_voice(wav_path: String) -> String {
-    match talkye_core::voice::prepare_cbx_voice(&wav_path) {
-        Ok(path) => path,
-        Err(e) => format!("ERROR: {e:#}"),
-    }
-}
-
-
 /// Preview a voice — generates TTS, saves preview WAV, plays it. Returns preview path.
 pub fn preview_voice(voice_path: String) -> String {
     match talkye_core::voice::preview_voice(&voice_path) {
@@ -399,3 +388,32 @@ pub fn voices_dir() -> String {
         .parent().unwrap().parent().unwrap();
     project_root.join("voices").to_string_lossy().to_string()
 }
+
+pub fn list_builtin_voices() -> Vec<FfiVoiceInfo> {
+    let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent().unwrap().parent().unwrap();
+    let builtin_dir = project_root.join("voices").join("builtin");
+    if !builtin_dir.is_dir() {
+        return vec![];
+    }
+    let mut voices = vec![];
+    if let Ok(entries) = std::fs::read_dir(&builtin_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if ext != "safetensors" { continue; }
+            let name = path.file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            voices.push(FfiVoiceInfo {
+                name, path: path.to_string_lossy().to_string(),
+                is_precomputed: true, size_bytes: size,
+            });
+        }
+    }
+    voices.sort_by(|a, b| a.name.cmp(&b.name));
+    voices
+}
+

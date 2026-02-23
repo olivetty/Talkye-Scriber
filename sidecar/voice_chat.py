@@ -1,7 +1,7 @@
 """Talkye Sidecar — Voice Chat pipeline.
 
 Full voice-to-voice loop:
-  Mic → VAD → whisper.cpp STT → Qwen3 LLM → pocket-tts TTS → Speaker
+  Mic → VAD → whisper.cpp STT → Groq LLM → pocket-tts TTS → Speaker
 
 Runs as a background thread, communicates via callback events.
 """
@@ -40,20 +40,15 @@ MAX_SEGMENT_FRAMES = 500      # ~15s max single utterance
 class VoiceChat:
     """Voice chat session — manages the full voice-to-voice loop."""
 
-    def __init__(self, on_event: Callable[[dict], None], model: str = "local", language: str = "en"):
+    def __init__(self, on_event: Callable[[dict], None], model: str = "llama-3.3-70b-versatile"):
         """
         Args:
-            on_event: Callback for events. Events:
-                {"type": "state", "state": "listening|processing|speaking|stopped"}
-                {"type": "user_text", "text": "..."}
-                {"type": "assistant_text", "text": "...", "done": bool}
-                {"type": "error", "message": "..."}
-            model: LLM model ID — "local" or a Groq model ID.
-            language: ISO 639-1 language code for TTS output (e.g. "en", "ro", "fr").
+            on_event: Callback for events.
+            model: Groq model ID.
         """
         self._on_event = on_event
         self._model = model
-        self._language = language
+        self._language = "en"
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._mic_proc: Optional[subprocess.Popen] = None
@@ -243,20 +238,11 @@ class VoiceChat:
         # Add to history
         self._history.append({"role": "user", "content": text})
 
-        # 3. LLM — generate response (local or Groq cloud)
+        # 3. LLM — generate response via Groq cloud
         try:
-            # Map ISO code to full language name for the system prompt
-            _lang_names = {
-                "en": "English", "ro": "Romanian", "es": "Spanish", "fr": "French",
-                "de": "German", "it": "Italian", "pt": "Portuguese", "nl": "Dutch",
-                "pl": "Polish", "ru": "Russian", "ja": "Japanese", "ko": "Korean",
-                "zh": "Chinese", "ar": "Arabic", "tr": "Turkish", "hi": "Hindi",
-                "sv": "Swedish", "da": "Danish", "fi": "Finnish", "el": "Greek",
-                "he": "Hebrew", "no": "Norwegian", "ms": "Malay", "sw": "Swahili",
-            }
-            lang_name = _lang_names.get(self._language, "English")
             system = (
-                f"You are a voice assistant. You MUST reply in {lang_name}. "
+                "You are a voice assistant. You MUST always reply in English, "
+                "regardless of what language the user speaks. "
                 "Keep it short: 1-3 sentences. No markdown. Plain text only."
             )
             hist = [m for m in self._history[-10:] if m is not self._history[-1]]
@@ -264,50 +250,122 @@ class VoiceChat:
             response_text = ""
             token_count = 0
 
-            if self._model == "local":
-                from llm_local import local_llm
-                if not local_llm.loaded:
-                    self._emit({"type": "error", "message": "LLM not loaded"})
-                    self._emit({"type": "state", "state": "listening"})
-                    return
+            # Pipelined sentence-streaming TTS:
+            # - Sentences are synthesized in parallel (up to 2 concurrent)
+            # - Playback uses a single persistent paplay process for zero-gap audio
+            # - First sentence starts playing as soon as it's synthesized
+            import queue as _queue
+            import wave
+            from concurrent.futures import ThreadPoolExecutor, Future
 
-                for token in local_llm.chat_stream(
-                    user_message=text,
-                    system_prompt=system,
-                    history=hist,
-                    max_tokens=256,
-                    temperature=0.7,
-                    enable_thinking=False,
-                ):
-                    response_text += token
-                    token_count += 1
-                    self._emit({"type": "assistant_text", "text": response_text, "done": False})
+            play_queue = _queue.Queue()    # WAV paths ready to play, in order
+            tts_done = threading.Event()
+            sentence_buf = ""
+            first_sentence_queued = False
+            pending_futures: list[Future] = []  # ordered synthesis futures
 
-                if not response_text.strip():
-                    logger.warning("Streaming returned empty, trying non-streaming...")
-                    response_text = local_llm.chat(
-                        user_message=wrapped_text,
-                        system_prompt=system,
-                        history=hist,
-                        max_tokens=256,
-                        temperature=0.7,
-                        enable_thinking=False,
-                    )
-            else:
-                # Groq cloud model
-                from llm_groq import groq_chat_stream
-                for token in groq_chat_stream(
-                    user_message=text,
-                    model=self._model,
-                    system_prompt=system,
-                    history=hist,
-                    max_tokens=256,
-                    temperature=0.7,
-                    enable_thinking=False,
-                ):
-                    response_text += token
-                    token_count += 1
-                    self._emit({"type": "assistant_text", "text": response_text, "done": False})
+            synth_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="vc-synth")
+
+            def _synth_one(text_to_synth: str) -> str | None:
+                """Synthesize a single sentence, return WAV path or None."""
+                from tts import synthesize
+                meta = synthesize(text_to_synth)
+                return meta["path"] if meta else None
+
+            def _play_worker():
+                """Play WAV files through a single persistent paplay process."""
+                env = user_env()
+                paplay = None
+                try:
+                    while True:
+                        item = play_queue.get()
+                        if item is None:
+                            break
+                        wav_path = item
+                        try:
+                            with wave.open(wav_path, 'rb') as wf:
+                                sr = wf.getframerate()
+                                ch = wf.getnchannels()
+                                sw = wf.getsampwidth()
+                                pcm = wf.readframes(wf.getnframes())
+                            if paplay is None or paplay.poll() is not None:
+                                fmt = "s16le" if sw == 2 else "s32le"
+                                paplay = subprocess.Popen(
+                                    ["paplay", f"--format={fmt}",
+                                     f"--rate={sr}", f"--channels={ch}", "--raw"],
+                                    stdin=subprocess.PIPE,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                    env=env,
+                                )
+                            paplay.stdin.write(pcm)
+                            paplay.stdin.flush()
+                        except Exception as e:
+                            logger.error("TTS play failed: %s", e)
+                            paplay = None
+                        finally:
+                            try:
+                                os.unlink(wav_path)
+                            except OSError:
+                                pass
+                finally:
+                    if paplay and paplay.stdin:
+                        try:
+                            paplay.stdin.close()
+                            paplay.wait(timeout=30)
+                        except Exception:
+                            pass
+                    tts_done.set()
+
+            play_t = threading.Thread(target=_play_worker, daemon=True, name="vc-play")
+            play_t.start()
+
+            def _flush_sentence():
+                nonlocal sentence_buf, first_sentence_queued
+                s = sentence_buf.strip()
+                if s:
+                    if not first_sentence_queued:
+                        first_sentence_queued = True
+                        self._speaking = True
+                        self._emit({"type": "state", "state": "speaking"})
+                    logger.info("Voice chat TTS queue: '%s'", s[:60])
+                    # Submit for parallel synthesis
+                    fut = synth_pool.submit(_synth_one, s)
+                    pending_futures.append(fut)
+                    sentence_buf = ""
+
+            def _drain_ready_futures():
+                """Feed completed futures to play queue in order."""
+                while pending_futures and pending_futures[0].done():
+                    fut = pending_futures.pop(0)
+                    try:
+                        path = fut.result()
+                        if path:
+                            play_queue.put(path)
+                    except Exception as e:
+                        logger.error("TTS synth error: %s", e)
+
+            # Groq cloud model
+            from llm_groq import groq_chat_stream
+            for token in groq_chat_stream(
+                user_message=text,
+                model=self._model,
+                system_prompt=system,
+                history=hist,
+                max_tokens=256,
+                temperature=0.7,
+                enable_thinking=False,
+            ):
+                response_text += token
+                token_count += 1
+                self._emit({"type": "assistant_text", "text": response_text, "done": False})
+
+                # Accumulate and split on sentence boundaries
+                sentence_buf += token
+                if any(sentence_buf.rstrip().endswith(p) for p in ('.', '!', '?', '。', '！', '？')):
+                    _flush_sentence()
+
+                # Feed any ready WAVs to player while LLM streams
+                _drain_ready_futures()
 
             response_text = response_text.strip()
             logger.info("Voice chat LLM (%s): %d tokens, response='%s'",
@@ -330,20 +388,35 @@ class VoiceChat:
         self._emit({"type": "assistant_text", "text": response_text, "done": True})
         self._history.append({"role": "assistant", "content": response_text})
 
+        # Flush any remaining text in sentence buffer
+        _flush_sentence()
+        # If nothing was queued at all (empty response), speak fallback
+        if not first_sentence_queued:
+            self._speaking = True
+            self._emit({"type": "state", "state": "speaking"})
+            fut = synth_pool.submit(_synth_one, response_text)
+            pending_futures.append(fut)
+
+        # Wait for all synthesis to complete and feed to player in order
+        for fut in pending_futures:
+            try:
+                path = fut.result(timeout=30)
+                if path:
+                    play_queue.put(path)
+            except Exception as e:
+                logger.error("TTS synth error: %s", e)
+        pending_futures.clear()
+        synth_pool.shutdown(wait=False)
+
+        # Signal player to finish and wait for playback to drain
+        play_queue.put(None)
+        tts_done.wait(timeout=60)
+
         # Trim history to last 20 messages
         if len(self._history) > 20:
             self._history = self._history[-20:]
 
-        # 4. TTS — speak the response
-        self._speaking = True
-        self._emit({"type": "state", "state": "speaking"})
-        try:
-            logger.info("Voice chat TTS: speaking '%s' (lang=%s)", response_text[:80], self._language)
-            ok = speak(response_text, language_id=self._language)
-            logger.info("Voice chat TTS: done (ok=%s)", ok)
-        except Exception as e:
-            logger.error("TTS failed: %s", e)
-        finally:
-            self._speaking = False
-            if self._running:
-                self._emit({"type": "state", "state": "listening"})
+        # TTS already handled by sentence streamer above
+        self._speaking = False
+        if self._running:
+            self._emit({"type": "state", "state": "listening"})
