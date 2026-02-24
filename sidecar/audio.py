@@ -143,10 +143,17 @@ def start_recording():
         )
     else:
         source = find_audio_source()
-        rec_args = ["parecord", "--format=s16le", "--rate=16000", "--channels=1",
-                     "--raw", config.RAWFILE]
+        # Use pw-record (PipeWire native) — writes WAV directly, better buffer handling
+        # than parecord --raw which loses trailing audio on SIGINT
+        rec_args = [
+            "pw-record",
+            "--rate", "16000",
+            "--channels", "1",
+            "--format", "s16",
+        ]
         if source:
-            rec_args.insert(1, f"--device={source}")
+            rec_args += ["--target", source]
+        rec_args.append(config.AUDIOFILE)
         config.rec_process = subprocess.Popen(
             rec_args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env,
         )
@@ -162,13 +169,15 @@ def stop_recording():
         return
 
     elapsed = time.monotonic() - config.rec_start_time
-    time.sleep(0.2)  # Brief pause to capture trailing speech
+    time.sleep(0.5)  # Extra recording time to capture trailing speech
 
-    config.rec_process.send_signal(signal.SIGINT)
+    # SIGTERM for pw-record (cleaner shutdown, flushes WAV header)
+    config.rec_process.send_signal(signal.SIGTERM)
     try:
-        config.rec_process.wait(timeout=2)
+        config.rec_process.wait(timeout=3)
     except subprocess.TimeoutExpired:
         config.rec_process.kill()
+        config.rec_process.wait(timeout=1)
     config.rec_process = None
     logger.info("Recording stopped (%.1fs)", elapsed)
     play_sound("stop")
@@ -182,6 +191,7 @@ def stop_recording():
                 pass
         return
 
+    # Legacy: convert raw PCM if parecord was used (macOS uses rec which writes WAV)
     if config.IS_LINUX and os.path.isfile(config.RAWFILE):
         try:
             subprocess.run(
@@ -193,6 +203,18 @@ def stop_recording():
         except Exception as e:
             logger.error("Raw to WAV conversion failed: %s", e)
             return
+
+    # Pad with 1s silence so whisper.cpp doesn't cut off trailing words
+    if os.path.isfile(config.AUDIOFILE):
+        try:
+            padded = config.AUDIOFILE + ".pad.wav"
+            subprocess.run(
+                ["sox", config.AUDIOFILE, padded, "pad", "0", "1.0"],
+                capture_output=True, timeout=5,
+            )
+            os.replace(padded, config.AUDIOFILE)
+        except Exception as e:
+            logger.warning("Failed to pad audio: %s", e)
 
     config.busy = True
     from transcribe import transcribe_and_paste

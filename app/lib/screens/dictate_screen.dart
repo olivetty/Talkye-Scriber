@@ -115,6 +115,7 @@ class _DictateScreenState extends State<DictateScreen> {
           'vad_timeout': widget.settings.vadTimeout,
           'auto_enter': widget.settings.autoEnter,
           'dictate_translate': widget.settings.dictateTranslate,
+          'dictate_grammar': widget.settings.dictateGrammar,
         });
       }
       final s = await _get('/dictate/status');
@@ -133,6 +134,10 @@ class _DictateScreenState extends State<DictateScreen> {
           final sidecarTranslate = s['dictate_translate'] as bool? ?? false;
           if (widget.settings.dictateTranslate != sidecarTranslate) {
             widget.settings.dictateTranslate = sidecarTranslate;
+          }
+          final sidecarGrammar = s['dictate_grammar'] as bool? ?? false;
+          if (widget.settings.dictateGrammar != sidecarGrammar) {
+            widget.settings.dictateGrammar = sidecarGrammar;
           }
         });
       }
@@ -486,6 +491,8 @@ class _DictateScreenState extends State<DictateScreen> {
         _row('Sound', _soundDropdown()),
         const SizedBox(height: 12),
         _row('Translate', _translateToggle()),
+        const SizedBox(height: 12),
+        _row('Grammar Fix', _grammarToggle()),
       ]),
     );
   }
@@ -660,7 +667,34 @@ class _DictateScreenState extends State<DictateScreen> {
             Text(on ? 'English' : 'Off',
               style: TextStyle(fontSize: 12, color: on ? C.accent : C.text, fontWeight: FontWeight.w500)),
             const SizedBox(width: 4),
-            Icon(on ? Icons.translate_rounded : Icons.translate_rounded,
+            Icon(Icons.translate_rounded,
+              size: 14, color: on ? C.accent : C.textMuted),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _grammarToggle() {
+    final on = widget.settings.dictateGrammar;
+    return GestureDetector(
+      onTap: _connected ? () {
+        final v = !on;
+        widget.settings.dictateGrammar = v;
+        widget.settings.save();
+        _post('/dictate/config', {'dictate_grammar': v});
+        setState(() {});
+      } : null,
+      child: MouseRegion(
+        cursor: _connected ? SystemMouseCursors.click : SystemMouseCursors.basic,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(color: C.level2, borderRadius: BorderRadius.circular(6)),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Text(on ? 'On' : 'Off',
+              style: TextStyle(fontSize: 12, color: on ? C.accent : C.text, fontWeight: FontWeight.w500)),
+            const SizedBox(width: 4),
+            Icon(Icons.spellcheck_rounded,
               size: 14, color: on ? C.accent : C.textMuted),
           ]),
         ),

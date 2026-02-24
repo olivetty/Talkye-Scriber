@@ -58,11 +58,13 @@ def groq_transcribe(audio_path: str, language: str = None) -> dict:
 
 
 def local_transcribe(audio_path: str, language: str = None) -> dict:
-    """Transcribe via local whisper.cpp binary (GPU-accelerated)."""
+    """Transcribe via local whisper.cpp binary (GPU-accelerated).
+
+    Uses turbo model for speed. Translation handled separately by LLM.
+    """
     import subprocess
     try:
-        # Use large-v3 for translate (turbo doesn't support it)
-        model = config.WHISPER_MODEL_TRANSLATE if config.DICTATE_TRANSLATE else config.WHISPER_MODEL
+        model = config.WHISPER_MODEL
         cmd = [
             config.WHISPER_BIN,
             "-m", model,
@@ -70,9 +72,11 @@ def local_transcribe(audio_path: str, language: str = None) -> dict:
             "--no-timestamps",
             "-np",
             "-t", "4",
+            "-bo", "5",           # best-of candidates
+            "-bs", "5",           # beam size
+            "-et", "2.8",         # higher entropy threshold = less aggressive filtering
+            "--no-speech-thold", "0.5",  # lower = keep more speech
         ]
-        if config.DICTATE_TRANSLATE:
-            cmd.append("--translate")
         if language:
             cmd += ["-l", language]
         else:
@@ -84,9 +88,8 @@ def local_transcribe(audio_path: str, language: str = None) -> dict:
 
         text = result.stdout.strip()
         text = " ".join(text.split())
-        mode = "translate" if config.DICTATE_TRANSLATE else "transcribe"
-        logger.info("Local %s (%.1fs) [%s]: %s",
-                     mode, elapsed, language or "auto", text)
+        logger.info("Local transcribe (%.1fs) [%s]: %s",
+                     elapsed, language or "auto", text)
         return {"text": text, "language": language or "auto", "duration": elapsed}
     except Exception as e:
         logger.warning("Local transcription failed: %s, falling back to Groq", e)
@@ -115,6 +118,29 @@ _HALLUCINATIONS = {
     "ne vedem la următoarea mea rețetă",
     "mulțumit pentru vizionare",
 }
+
+
+def _select_and_replace(old_text: str, new_text: str):
+    """Select the previously pasted text and replace it with corrected text.
+
+    Selects backwards by character count, then pastes the replacement
+    which overwrites the selection.
+    """
+    import subprocess
+    n = len(old_text)
+    if n <= 0:
+        return
+    env = user_env()
+    prefix = xdotool_prefix()
+    release_modifiers()
+    # Select N characters backwards using --repeat (fast, single xdotool call)
+    subprocess.run(
+        prefix + ["xdotool", "key", "--clearmodifiers", "--repeat", str(n), "--delay", "0", "shift+Left"],
+        timeout=10, env=env, capture_output=True,
+    )
+    time.sleep(0.05)
+    # Paste the corrected text (replaces selection)
+    paste_text(new_text)
 
 
 def _strip_wake_phrase(text: str) -> str | None:
@@ -221,16 +247,22 @@ def transcribe_and_paste(prefetched_result=None):
         # Normal dictation — leading space for segment separation
         text = " " + text
 
-        use_cleanup = config.LLM_CLEANUP
-        use_translate = config.TRANSLATE_TO if config.TRANSLATE_ENABLED else None
+        use_cleanup = config.LLM_CLEANUP or config.DICTATE_GRAMMAR
+        use_translate = "en" if config.DICTATE_TRANSLATE else None
+        if not use_translate:
+            use_translate = config.TRANSLATE_TO if config.TRANSLATE_ENABLED else None
 
         if use_cleanup or use_translate:
-            full_output = []
-            for token in config.core.llm_process_stream(text, detected_lang, use_cleanup, use_translate):
-                full_output.append(token)
-                type_chunk(token)
-            final = "".join(full_output).strip()
-            logger.info("Final output: %s", final)
+            # Show raw STT text immediately so user doesn't wait
+            paste_text(text)
+            # Process through LLM (Groq — fast)
+            corrected = config.core.llm_process(text.strip(), detected_lang, use_cleanup, use_translate)
+            if corrected and corrected.strip() != text.strip():
+                # Add leading space back (segment separation)
+                corrected = " " + corrected.strip()
+                # Select the raw text we just pasted and replace with corrected
+                _select_and_replace(text, corrected)
+            logger.info("Final output: %s", corrected)
         else:
             notify(f"[{detected_lang}] {text}")
             time.sleep(0.3)

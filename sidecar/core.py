@@ -76,10 +76,16 @@ class DictateCore:
         self.openai_api_key = openai_api_key or os.getenv("OPENAI_API_KEY", "")
         self.whisper_compute = whisper_compute or os.getenv("WHISPER_COMPUTE", "int8_float16")
 
-        # LLM settings
+        # LLM settings — prefer Groq for speed (GPT OSS 120B at 500 T/s)
         self.llm_provider = (llm_provider or os.getenv("LLM_PROVIDER", "groq")).lower()
-        self.llm_api_key = llm_api_key or os.getenv("LLM_API_KEY", "")
-        self.llm_model = llm_model or os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
+        self.llm_api_key = llm_api_key or os.getenv("LLM_API_KEY", "") or os.getenv("GROQ_API_KEY", "")
+        self.llm_model = llm_model or os.getenv("LLM_MODEL", "openai/gpt-oss-20b")
+
+        # If using Groq provider but LLM_API_KEY is not a Groq key, fall back to GROQ_API_KEY
+        if self.llm_provider == "groq" and self.llm_api_key and not self.llm_api_key.startswith("gsk_"):
+            groq_key = os.getenv("GROQ_API_KEY", "")
+            if groq_key:
+                self.llm_api_key = groq_key
 
         # Backend-specific init
         self._whisper_client = None
@@ -313,29 +319,21 @@ class DictateCore:
                       "fr": "French", "es": "Spanish", "it": "Italian"}
 
         if cleanup and translate_to:
-            src = lang_names.get(source_lang, source_lang)
             tgt = lang_names.get(translate_to, translate_to)
             return (
-                f"You are a translator for dictated speech. The user spoke in {src} "
-                f"and it was transcribed by speech-to-text. "
-                f"Translate it to natural, grammatically correct {tgt}. "
-                f"Keep the SAME meaning, tone, and intent — do NOT summarize or add ideas. "
-                f"Fix transcription typos and produce fluent {tgt} (not word-for-word). "
-                f"Output ONLY the translated text, nothing else."
+                f"Fix any speech-to-text errors and translate to {tgt}. "
+                f"Output ONLY the corrected translation."
             )
         elif cleanup:
             return (
-                "You are a dictation assistant. The user dictated text that was transcribed "
-                "by speech-to-text. Clean up any transcription errors, fix punctuation and "
-                "grammar. Keep the same language. Output ONLY the cleaned text, nothing else."
+                "Fix speech-to-text errors: grammar, punctuation, typos. "
+                "Same language. Output ONLY the fixed text."
             )
         else:  # translate only
             tgt = lang_names.get(translate_to, translate_to)
             return (
-                f"Translate the following text to {tgt} as literally and accurately as possible. "
-                f"Do NOT summarize, do NOT interpret, do NOT add or remove meaning. "
-                f"Preserve the original structure and tone exactly. "
-                f"Output ONLY the translation, nothing else."
+                f"Translate to {tgt}. Preserve meaning exactly. "
+                f"Output ONLY the translation."
             )
 
     def llm_process(
@@ -345,17 +343,7 @@ class DictateCore:
         cleanup: bool = False,
         translate_to: Optional[str] = None,
     ) -> str:
-        """Process text through LLM (cleanup and/or translate). Returns final text.
-
-        Args:
-            text: Input text to process
-            source_lang: Source language code
-            cleanup: Fix transcription errors
-            translate_to: Target language code, or None to skip translation
-
-        Returns:
-            Processed text string
-        """
+        """Process text through LLM (cleanup and/or translate). Returns final text."""
         if not cleanup and not translate_to:
             return text
         if not self.llm_api_key:
@@ -366,6 +354,9 @@ class DictateCore:
             client = self._get_llm_client()
             system_prompt = self._build_llm_prompt(source_lang, cleanup, translate_to)
 
+            input_words = len(text.split())
+            max_tok = min(max(input_words * 4, 64), 512)
+
             t0 = time.perf_counter()
             response = client.chat.completions.create(
                 model=self.llm_model,
@@ -374,11 +365,15 @@ class DictateCore:
                     {"role": "user", "content": text},
                 ],
                 temperature=0.3,
-                max_tokens=2048,
+                max_tokens=max_tok,
             )
             result = response.choices[0].message.content.strip()
             elapsed = time.perf_counter() - t0
             logger.info("LLM processed in %.2fs: %s → %s", elapsed, text[:80], result[:80])
+            # Guard against empty LLM responses
+            if not result:
+                logger.warning("LLM returned empty response, keeping original text")
+                return text
             return result
         except Exception as e:
             logger.exception("LLM processing failed, returning original text")
@@ -391,17 +386,7 @@ class DictateCore:
         cleanup: bool = False,
         translate_to: Optional[str] = None,
     ) -> Generator[str, None, None]:
-        """Process text through LLM with streaming. Yields tokens as they generate.
-
-        Args:
-            text: Input text to process
-            source_lang: Source language code
-            cleanup: Fix transcription errors
-            translate_to: Target language code, or None to skip translation
-
-        Yields:
-            Text tokens as they are generated
-        """
+        """Process text through LLM with streaming. Yields tokens as they generate."""
         if not cleanup and not translate_to:
             yield text
             return
@@ -414,6 +399,10 @@ class DictateCore:
             client = self._get_llm_client()
             system_prompt = self._build_llm_prompt(source_lang, cleanup, translate_to)
 
+            # Scale max_tokens to input length (dictation is short)
+            input_words = len(text.split())
+            max_tok = min(max(input_words * 4, 64), 512)
+
             t0 = time.perf_counter()
             stream = client.chat.completions.create(
                 model=self.llm_model,
@@ -422,7 +411,7 @@ class DictateCore:
                     {"role": "user", "content": text},
                 ],
                 temperature=0.3,
-                max_tokens=2048,
+                max_tokens=max_tok,
                 stream=True,
             )
 

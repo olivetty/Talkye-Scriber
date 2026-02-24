@@ -31,6 +31,7 @@ SOUND_THEME = os.getenv("DICTATE_SOUND_THEME", "subtle")
 WAKEWORD_THRESHOLD = float(os.getenv("DICTATE_WAKEWORD_THRESHOLD", "0.55"))
 STT_BACKEND = os.getenv("DICTATE_STT_BACKEND", "local")  # groq | local
 DICTATE_TRANSLATE = os.getenv("DICTATE_TRANSLATE", "false").lower() == "true"
+DICTATE_GRAMMAR = os.getenv("DICTATE_GRAMMAR", "false").lower() == "true"
 
 # ── Paths ──
 
@@ -105,9 +106,16 @@ def rebuild_strip_variants():
 rebuild_strip_variants()
 
 # ── Core engine ──
+# Dictation LLM MUST use Groq for speed (500-1000 T/s).
+# .env has LLM_PROVIDER=xai / LLM_API_KEY=xai-... / LLM_MODEL=grok-... for chat,
+# but dictation needs GROQ_API_KEY + a Groq-compatible model explicitly.
 
 from core import DictateCore
-core = DictateCore()
+core = DictateCore(
+    llm_provider="groq",
+    llm_api_key=os.getenv("GROQ_API_KEY", ""),
+    llm_model="llama-3.3-70b-versatile",
+)
 
 # ── Local LLM ──
 # LLM is loaded on-demand when user enters Chat screen (see server.py /llm/load).
@@ -123,7 +131,7 @@ def set_vad_active():
 def load_flutter_settings():
     """Read ~/.config/talkye/settings.json to pick up Flutter-saved settings."""
     global INPUT_MODE, TRIGGER_KEY, SOUND_THEME, VAD_ACTIVE_TIMEOUT, VAD_AUTO_ENTER
-    global WAKEWORD_THRESHOLD, WAKE_PHRASE, STT_BACKEND, DICTATE_TRANSLATE
+    global WAKEWORD_THRESHOLD, WAKE_PHRASE, STT_BACKEND, DICTATE_TRANSLATE, DICTATE_GRAMMAR
     import json
     import logging
     logger = logging.getLogger(__name__)
@@ -166,5 +174,8 @@ def load_flutter_settings():
             if "dictateTranslate" in cfg:
                 DICTATE_TRANSLATE = bool(cfg["dictateTranslate"])
                 logger.info("Settings: dictate_translate=%s", DICTATE_TRANSLATE)
+            if "dictateGrammar" in cfg:
+                DICTATE_GRAMMAR = bool(cfg["dictateGrammar"])
+                logger.info("Settings: dictate_grammar=%s", DICTATE_GRAMMAR)
     except Exception as e:
         logger.warning("Failed to load Flutter settings: %s", e)

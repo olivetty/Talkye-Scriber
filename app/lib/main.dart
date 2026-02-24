@@ -53,7 +53,8 @@ class AppSettings {
   String soundTheme; // subtle | mechanical | silent
   String inputMode; // ptt | vad
   String dictateSttBackend; // groq | local (whisper.cpp)
-  bool dictateTranslate; // translate to English via whisper.cpp
+  bool dictateTranslate; // translate to English via LLM
+  bool dictateGrammar; // grammar/cleanup fix via LLM
   String wakePhrase; // wake phrase for VAD (user-trained)
   int vadTimeout; // seconds of silence → standby
   bool autoEnter; // press Enter when VAD session ends
@@ -68,6 +69,7 @@ class AppSettings {
     this.inputMode = 'ptt',
     this.dictateSttBackend = 'local',
     this.dictateTranslate = false,
+    this.dictateGrammar = false,
     this.wakePhrase = 'hey mira',
     this.vadTimeout = 8,
     this.autoEnter = true,
@@ -93,6 +95,7 @@ class AppSettings {
           inputMode: map['inputMode'] as String? ?? 'ptt',
           dictateSttBackend: map['dictateSttBackend'] as String? ?? 'groq',
           dictateTranslate: map['dictateTranslate'] as bool? ?? false,
+          dictateGrammar: map['dictateGrammar'] as bool? ?? false,
           wakePhrase: map['wakePhrase'] as String? ?? 'hey mira',
           vadTimeout: map['vadTimeout'] as int? ?? 8,
           autoEnter: map['autoEnter'] as bool? ?? true,
@@ -119,6 +122,7 @@ class AppSettings {
         'inputMode': inputMode,
         'dictateSttBackend': dictateSttBackend,
         'dictateTranslate': dictateTranslate,
+        'dictateGrammar': dictateGrammar,
         'wakePhrase': wakePhrase,
         'vadTimeout': vadTimeout,
         'autoEnter': autoEnter,
