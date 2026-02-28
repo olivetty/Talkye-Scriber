@@ -51,8 +51,11 @@ Upload to R2 (fast CDN — primary download source):
 ```bash
 aws s3 cp TalkyeScriber-x86_64.AppImage \
   s3://talkye/TalkyeScriber-x86_64.AppImage \
-  --endpoint-url https://c6a0e4dbb28340eab0e92e4568bd42f2.r2.cloudflarestorage.com
+  --endpoint-url https://c6a0e4dbb28340eab0e92e4568bd42f2.r2.cloudflarestorage.com \
+  --cache-control "no-cache, no-store, must-revalidate"
 ```
+IMPORTANT: The `--cache-control` flag is required to bust Cloudflare edge cache.
+Without it, CDN may serve stale versions for hours.
 R2 credentials must be configured in `~/.aws/credentials` under profile `r2` or as env vars.
 
 Create GitHub Release (fallback download source):
