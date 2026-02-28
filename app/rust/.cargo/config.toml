@@ -1,4 +1,0 @@
-# Optimize for native CPU — enables AVX2/SSE4.2 on Ryzen 7 3800X
-# Must match core/.cargo/config.toml for identical performance
-[build]
-rustflags = ["-C", "target-cpu=native"]
