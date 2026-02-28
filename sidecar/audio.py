@@ -35,7 +35,7 @@ def generate_sounds():
             if not os.path.isfile(path):
                 try:
                     subprocess.run(
-                        ["sox", "-n", "-r", "44100", path] + effect.split(),
+                        [config.SOX_BIN, "-n", "-r", "44100", path] + effect.split(),
                         capture_output=True, timeout=5,
                     )
                 except Exception as e:
@@ -194,7 +194,7 @@ def stop_recording():
     if config.IS_LINUX and os.path.isfile(config.RAWFILE):
         try:
             subprocess.run(
-                ["sox", "-r", "16000", "-e", "signed", "-b", "16", "-c", "1",
+                [config.SOX_BIN, "-r", "16000", "-e", "signed", "-b", "16", "-c", "1",
                  config.RAWFILE, config.AUDIOFILE],
                 capture_output=True, timeout=5,
             )
@@ -208,7 +208,7 @@ def stop_recording():
         try:
             padded = config.AUDIOFILE + ".pad.wav"
             subprocess.run(
-                ["sox", config.AUDIOFILE, padded, "pad", "0", "1.0"],
+                [config.SOX_BIN, config.AUDIOFILE, padded, "pad", "0", "1.0"],
                 capture_output=True, timeout=5,
             )
             os.replace(padded, config.AUDIOFILE)

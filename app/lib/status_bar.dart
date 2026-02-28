@@ -2,19 +2,24 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'theme.dart';
+import 'version.dart';
+import 'updater.dart';
 
 /// Global status bar shown at the bottom of every page.
-/// Shows real-time RAM, CPU, and GPU VRAM usage.
 class StatusBar extends StatefulWidget {
   const StatusBar({super.key});
   @override
-  State<StatusBar> createState() => _StatusBarState();
+  State<StatusBar> createState() => StatusBarState();
 }
 
-class _StatusBarState extends State<StatusBar> {
+class StatusBarState extends State<StatusBar> {
   Timer? _timer;
   int _ramMB = 0;
   double _cpuPct = 0;
+  UpdateInfo? _updateInfo;
+  bool _updating = false;
+  double _updateProgress = 0;
+  String _updateStatus = '';
 
   // Delta CPU tracking
   final Map<int, _CpuSample> _prev = {};
@@ -24,6 +29,36 @@ class _StatusBarState extends State<StatusBar> {
     super.initState();
     _refresh();
     _timer = Timer.periodic(const Duration(seconds: 3), (_) => _refresh());
+    _checkUpdate();
+  }
+
+  Future<void> _checkUpdate() async {
+    final info = await checkForUpdate();
+    if (info != null && mounted) {
+      setState(() => _updateInfo = info);
+    }
+  }
+
+  Future<void> _doUpdate() async {
+    if (_updateInfo == null) return;
+    setState(() => _updating = true);
+    try {
+      await performUpdate(_updateInfo!, (progress, status) {
+        if (mounted) {
+          setState(() {
+            _updateProgress = progress;
+            _updateStatus = status;
+          });
+        }
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _updating = false;
+          _updateStatus = 'Update failed: $e';
+        });
+      }
+    }
   }
 
   @override
@@ -107,8 +142,53 @@ class _StatusBarState extends State<StatusBar> {
           const SizedBox(width: 16),
           _item(Icons.speed_rounded, '${_cpuPct.toStringAsFixed(1)}%'),
           const Spacer(),
+          if (_updating) ...[
+            SizedBox(
+              width: 60,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(3),
+                child: LinearProgressIndicator(
+                  value: _updateProgress > 0 ? _updateProgress : null,
+                  minHeight: 3,
+                  backgroundColor: C.level2,
+                  valueColor: const AlwaysStoppedAnimation<Color>(C.accent),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              _updateStatus,
+              style: const TextStyle(fontSize: 10, color: C.textSub),
+            ),
+          ] else if (_updateInfo != null) ...[
+            GestureDetector(
+              onTap: _doUpdate,
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: C.accent.withAlpha(20),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    'Update v${_updateInfo!.version}',
+                    style: const TextStyle(
+                      fontSize: 10,
+                      color: C.accent,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+          ],
           Text(
-            'Talkye Scriber v0.3.0',
+            'Talkye Scriber v$appVersion',
             style: TextStyle(fontSize: 10, color: C.textSub.withAlpha(120)),
           ),
         ],

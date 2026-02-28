@@ -9,6 +9,7 @@ import 'package:window_manager/window_manager.dart';
 import 'theme.dart';
 import 'status_bar.dart';
 import 'screens/dictate_screen.dart';
+import 'screens/setup_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -252,6 +253,7 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> with WindowListener {
   late final AppSettings _settings;
+  bool _setupDone = false;
 
   // System tray
   final SystemTray _tray = SystemTray();
@@ -266,6 +268,22 @@ class _AppShellState extends State<AppShell> with WindowListener {
     _settings = AppSettings.load();
     windowManager.addListener(this);
     _extractTrayIcons().then((_) => _initTray());
+    _checkModelAndStart();
+  }
+
+  Future<void> _checkModelAndStart() async {
+    final home = Platform.environment['HOME'] ?? '/tmp';
+    final modelPath = '$home/.config/talkye/models/ggml-large-v3-turbo.bin';
+    final modelFile = File(modelPath);
+    if (await modelFile.exists() && await modelFile.length() > 100000000) {
+      setState(() => _setupDone = true);
+      _startSidecar();
+    }
+    // If model missing, SetupScreen will show and call _onSetupComplete when done
+  }
+
+  void _onSetupComplete() {
+    setState(() => _setupDone = true);
     _startSidecar();
   }
 
@@ -277,7 +295,10 @@ class _AppShellState extends State<AppShell> with WindowListener {
         ? exe.substring(0, exe.indexOf('/app/build'))
         : exe.substring(0, exe.lastIndexOf('/'));
 
+    // TALKYE_SIDECAR_DIR is set by AppRun in AppImage
+    final envSidecar = Platform.environment['TALKYE_SIDECAR_DIR'];
     final candidates = [
+      if (envSidecar != null) envSidecar,
       '$projectRoot/sidecar',
       '${Platform.environment['HOME']}/Code/talkye-meet/sidecar',
       '${Directory.current.path}/sidecar',
@@ -313,13 +334,22 @@ class _AppShellState extends State<AppShell> with WindowListener {
       } catch (_) {}
     }
 
+    // Use bundled Python if available (TALKYE_PYTHON set by AppRun)
+    final bundledPython = Platform.environment['TALKYE_PYTHON'];
     final venvPython = '$sidecarDir/venv/bin/python';
 
     LogBuffer.add('SIDECAR: running setup...');
     try {
-      final setupResult = await Process.run('bash', [
-        '$sidecarDir/setup.sh',
-      ], workingDirectory: sidecarDir).timeout(const Duration(minutes: 3));
+      final setupEnv = Map<String, String>.from(Platform.environment);
+      if (bundledPython != null) {
+        setupEnv['TALKYE_PYTHON'] = bundledPython;
+      }
+      final setupResult = await Process.run(
+        'bash',
+        ['$sidecarDir/setup.sh'],
+        workingDirectory: sidecarDir,
+        environment: setupEnv,
+      ).timeout(const Duration(minutes: 3));
       if (setupResult.exitCode != 0) {
         LogBuffer.add('SIDECAR: setup failed: ${setupResult.stderr}');
         if (!await File(venvPython).exists()) return;
@@ -458,12 +488,14 @@ class _AppShellState extends State<AppShell> with WindowListener {
               children: [
                 const _TitleBar(),
                 Expanded(
-                  child: DictateScreen(
-                    settings: _settings,
-                    onRestartSidecar: restartSidecar,
-                  ),
+                  child: _setupDone
+                      ? DictateScreen(
+                          settings: _settings,
+                          onRestartSidecar: restartSidecar,
+                        )
+                      : SetupScreen(onSetupComplete: _onSetupComplete),
                 ),
-                const StatusBar(),
+                if (_setupDone) const StatusBar(),
               ],
             ),
           ),

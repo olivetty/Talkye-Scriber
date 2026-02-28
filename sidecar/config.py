@@ -33,10 +33,14 @@ SOUNDDIR = os.path.join(tempfile.gettempdir(), "dictate_sounds")
 
 # whisper.cpp local STT
 _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
-WHISPER_BIN = os.path.join(_PROJECT_ROOT, "whisper.cpp", "build", "bin", "whisper-cli")
+WHISPER_BIN = os.getenv("TALKYE_WHISPER_BIN",
+    os.path.join(_PROJECT_ROOT, "whisper.cpp", "build", "bin", "whisper-cli"))
 WHISPER_MODEL = os.path.join(
     os.getenv("HOME", "/tmp"), ".config", "talkye", "models", "ggml-large-v3-turbo.bin"
 )
+
+# sox binary (bundled in AppImage or system)
+SOX_BIN = os.getenv("TALKYE_SOX", "sox")
 
 # ── Timing ──
 

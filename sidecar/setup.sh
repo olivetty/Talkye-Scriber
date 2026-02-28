@@ -10,10 +10,13 @@ VENV_DIR="$SIDECAR_DIR/venv"
 PYTHON="${VENV_DIR}/bin/python"
 PIP="${VENV_DIR}/bin/pip"
 
+# Use bundled Python if available (set by AppRun in AppImage)
+SYSTEM_PYTHON="${TALKYE_PYTHON:-python3}"
+
 # ── Create venv if needed ──
 if [ ! -f "$PYTHON" ]; then
-    echo "[setup] Creating Python venv..."
-    python3 -m venv "$VENV_DIR"
+    echo "[setup] Creating Python venv (using $SYSTEM_PYTHON)..."
+    "$SYSTEM_PYTHON" -m venv "$VENV_DIR"
 fi
 
 # ── Install base deps (fast if already installed) ──

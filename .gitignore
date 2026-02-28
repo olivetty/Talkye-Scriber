@@ -27,3 +27,7 @@ Thumbs.db
 
 # whisper.cpp (compiled locally)
 whisper.cpp/
+
+# AppImage build
+.appimage-build/
+TalkyeScriber-*.AppImage

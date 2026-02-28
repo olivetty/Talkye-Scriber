@@ -1,0 +1,126 @@
+import 'dart:convert';
+import 'dart:io';
+import 'version.dart';
+
+const _repoOwner = 'olivetty';
+const _repoName = 'Talkye-Meet-Assistant';
+
+class UpdateInfo {
+  final String version;
+  final String downloadUrl;
+  final String body; // release notes
+  UpdateInfo({
+    required this.version,
+    required this.downloadUrl,
+    this.body = '',
+  });
+}
+
+/// Check GitHub Releases for a newer version. Returns null if up to date.
+Future<UpdateInfo?> checkForUpdate() async {
+  try {
+    final client = HttpClient();
+    client.connectionTimeout = const Duration(seconds: 5);
+    final req = await client.getUrl(
+      Uri.parse(
+        'https://api.github.com/repos/$_repoOwner/$_repoName/releases/latest',
+      ),
+    );
+    req.headers.set('Accept', 'application/vnd.github.v3+json');
+    req.headers.set('User-Agent', 'TalkyeScriber/$appVersion');
+    final resp = await req.close().timeout(const Duration(seconds: 10));
+    if (resp.statusCode != 200) return null;
+
+    final body = await resp.transform(utf8.decoder).join();
+    client.close();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+
+    final tagName = (data['tag_name'] as String? ?? '').replaceFirst('v', '');
+    if (tagName.isEmpty || !_isNewer(tagName, appVersion)) return null;
+
+    // Find AppImage asset
+    final assets = data['assets'] as List<dynamic>? ?? [];
+    String? downloadUrl;
+    for (final asset in assets) {
+      final name = asset['name'] as String? ?? '';
+      if (name.contains('AppImage') && name.contains('x86_64')) {
+        downloadUrl = asset['browser_download_url'] as String?;
+        break;
+      }
+    }
+    if (downloadUrl == null) return null;
+
+    return UpdateInfo(
+      version: tagName,
+      downloadUrl: downloadUrl,
+      body: data['body'] as String? ?? '',
+    );
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Compare semver strings. Returns true if remote > local.
+bool _isNewer(String remote, String local) {
+  final r = remote.split('.').map((s) => int.tryParse(s) ?? 0).toList();
+  final l = local.split('.').map((s) => int.tryParse(s) ?? 0).toList();
+  while (r.length < 3) r.add(0);
+  while (l.length < 3) l.add(0);
+  for (var i = 0; i < 3; i++) {
+    if (r[i] > l[i]) return true;
+    if (r[i] < l[i]) return false;
+  }
+  return false;
+}
+
+/// Download new AppImage and replace current one, then restart.
+Future<void> performUpdate(
+  UpdateInfo info,
+  void Function(double progress, String status) onProgress,
+) async {
+  final appImagePath = Platform.environment['APPIMAGE'];
+  if (appImagePath == null || appImagePath.isEmpty) {
+    throw Exception('Not running as AppImage');
+  }
+
+  final tmpPath = '$appImagePath.new';
+  onProgress(0, 'Downloading v${info.version}...');
+
+  final client = HttpClient();
+  client.connectionTimeout = const Duration(seconds: 15);
+  final request = await client.getUrl(Uri.parse(info.downloadUrl));
+  final response = await request.close();
+
+  if (response.statusCode != 200) {
+    throw Exception('HTTP ${response.statusCode}');
+  }
+
+  final total = response.contentLength;
+  var downloaded = 0;
+  final sink = File(tmpPath).openWrite();
+
+  await for (final chunk in response) {
+    sink.add(chunk);
+    downloaded += chunk.length;
+    final pct = total > 0 ? downloaded / total : 0.0;
+    final mb = (downloaded / 1048576).toStringAsFixed(0);
+    final totalMb = (total / 1048576).toStringAsFixed(0);
+    onProgress(pct, 'Downloading v${info.version}... $mb / $totalMb MB');
+  }
+  await sink.close();
+  client.close();
+
+  onProgress(1.0, 'Installing...');
+
+  // Make executable
+  await Process.run('chmod', ['+x', tmpPath]);
+  // Replace current AppImage
+  File(tmpPath).renameSync(appImagePath);
+
+  onProgress(1.0, 'Restarting...');
+  await Future.delayed(const Duration(milliseconds: 500));
+
+  // Restart
+  Process.start(appImagePath, [], mode: ProcessStartMode.detached);
+  exit(0);
+}
