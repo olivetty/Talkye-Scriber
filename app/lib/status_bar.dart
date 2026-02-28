@@ -24,17 +24,25 @@ class _StatusBarState extends State<StatusBar> {
   // Delta CPU tracking
   final Map<int, _CpuSample> _prev = {};
 
+  Timer? _updateTimer;
+
   @override
   void initState() {
     super.initState();
     _refresh();
     _timer = Timer.periodic(const Duration(seconds: 3), (_) => _refresh());
-    _checkUpdate();
+    // Check for updates at startup (after 5s delay) and every 4 hours
+    Future.delayed(const Duration(seconds: 5), _checkUpdate);
+    _updateTimer = Timer.periodic(
+      const Duration(hours: 4),
+      (_) => _checkUpdate(),
+    );
   }
 
   Future<void> _checkUpdate() async {
     final info = await checkForUpdate();
     if (info != null && mounted) {
+      updateAvailable.value = info;
       setState(() => _updateInfo = info);
     }
   }
@@ -64,6 +72,7 @@ class _StatusBarState extends State<StatusBar> {
   @override
   void dispose() {
     _timer?.cancel();
+    _updateTimer?.cancel();
     super.dispose();
   }
 

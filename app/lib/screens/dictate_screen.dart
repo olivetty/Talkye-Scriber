@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import '../main.dart';
 import '../theme.dart';
+import '../updater.dart';
 import 'key_picker_dialog.dart';
 
 const _baseUrl = 'http://127.0.0.1:8179';
@@ -148,6 +149,10 @@ class _DictateScreenState extends State<DictateScreen> {
     _poll();
   }
 
+  void _dismissUpdate() {
+    updateAvailable.value = null;
+  }
+
   void _showKeyPicker() {
     showDialog(
       context: context,
@@ -180,6 +185,52 @@ class _DictateScreenState extends State<DictateScreen> {
   Widget build(BuildContext context) {
     return Column(
       children: [
+        // Update banner
+        ValueListenableBuilder<UpdateInfo?>(
+          valueListenable: updateAvailable,
+          builder: (_, info, __) {
+            if (info == null) return const SizedBox.shrink();
+            return Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              color: C.accent.withAlpha(15),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.system_update_rounded,
+                    size: 16,
+                    color: C.accent,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Version ${info.version} is available',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: C.text,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                  GestureDetector(
+                    onTap: () => _dismissUpdate(),
+                    child: const MouseRegion(
+                      cursor: SystemMouseCursors.click,
+                      child: Padding(
+                        padding: EdgeInsets.only(left: 8),
+                        child: Icon(
+                          Icons.close_rounded,
+                          size: 14,
+                          color: C.textMuted,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
         Expanded(
           child: ListView(
             padding: const EdgeInsets.all(24),

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'version.dart';
 
 const _repoOwner = 'olivetty';
@@ -15,6 +16,9 @@ class UpdateInfo {
     this.body = '',
   });
 }
+
+/// Global notifier so any widget can react to available updates.
+final updateAvailable = ValueNotifier<UpdateInfo?>(null);
 
 /// Check GitHub Releases for a newer version. Returns null if up to date.
 Future<UpdateInfo?> checkForUpdate() async {
