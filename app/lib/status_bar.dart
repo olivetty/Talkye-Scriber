@@ -47,7 +47,8 @@ class _StatusBarState extends State<StatusBar> {
 
     if (!mounted) return;
     setState(() {
-      _ramMB = ((app?.rssBytes ?? 0) + (sidecar?.rssBytes ?? 0)) ~/ (1024 * 1024);
+      _ramMB =
+          ((app?.rssBytes ?? 0) + (sidecar?.rssBytes ?? 0)) ~/ (1024 * 1024);
       _cpuPct = (app?.cpuPct ?? 0) + (sidecar?.cpuPct ?? 0);
       _gpuMB = gpu.$1;
       _gpuTotalMB = gpu.$2;
@@ -111,7 +112,11 @@ class _StatusBarState extends State<StatusBar> {
       ]);
       int total = 0;
       if (rTotal.exitCode == 0) {
-        total = int.tryParse((rTotal.stdout as String).trim().split('\n').first.trim()) ?? 0;
+        total =
+            int.tryParse(
+              (rTotal.stdout as String).trim().split('\n').first.trim(),
+            ) ??
+            0;
       }
 
       // Get per-process VRAM usage — sum only our PIDs + their children
@@ -158,27 +163,41 @@ class _StatusBarState extends State<StatusBar> {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
       color: C.level1,
-      child: Row(children: [
-        _item(Icons.memory_rounded, '$_ramMB MB'),
-        const SizedBox(width: 16),
-        _item(Icons.speed_rounded, '${_cpuPct.toStringAsFixed(1)}%'),
-        if (_gpuTotalMB > 0) ...[
+      child: Row(
+        children: [
+          _item(Icons.memory_rounded, '$_ramMB MB'),
           const SizedBox(width: 16),
-          _item(Icons.developer_board_rounded, '$_gpuMB / $_gpuTotalMB MB'),
+          _item(Icons.speed_rounded, '${_cpuPct.toStringAsFixed(1)}%'),
+          if (_gpuTotalMB > 0) ...[
+            const SizedBox(width: 16),
+            _item(Icons.developer_board_rounded, '$_gpuMB / $_gpuTotalMB MB'),
+          ],
+          const Spacer(),
+          Text(
+            'Talkye Scriber v0.3.0',
+            style: TextStyle(fontSize: 10, color: C.textMuted.withAlpha(80)),
+          ),
         ],
-        const Spacer(),
-        Text('Talkye Meet v0.2.1',
-          style: TextStyle(fontSize: 10, color: C.textMuted.withAlpha(80))),
-      ]),
+      ),
     );
   }
 
   Widget _item(IconData icon, String label) {
-    return Row(mainAxisSize: MainAxisSize.min, children: [
-      Icon(icon, size: 11, color: C.textMuted),
-      const SizedBox(width: 4),
-      Text(label, style: const TextStyle(fontSize: 10, color: C.textSub, fontFamily: 'monospace')),
-    ]);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 11, color: C.textMuted),
+        const SizedBox(width: 4),
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 10,
+            color: C.textSub,
+            fontFamily: 'monospace',
+          ),
+        ),
+      ],
+    );
   }
 }
 

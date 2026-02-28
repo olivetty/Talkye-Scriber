@@ -7,9 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:system_tray/system_tray.dart';
 import 'package:window_manager/window_manager.dart';
 import 'theme.dart';
-import 'sidebar.dart';
 import 'status_bar.dart';
-import 'screens/settings_screen.dart';
 import 'screens/dictate_screen.dart';
 
 Future<void> main() async {
@@ -176,7 +174,6 @@ class AppShell extends StatefulWidget {
 }
 
 class _AppShellState extends State<AppShell> with WindowListener {
-  NavSection _section = NavSection.dictate;
   late final AppSettings _settings;
 
   // System tray
@@ -376,36 +373,18 @@ class _AppShellState extends State<AppShell> with WindowListener {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Row(
+      body: Column(
         children: [
-          Sidebar(
-            active: _section,
-            onSelect: (s) => setState(() => _section = s),
-          ),
-          Container(width: 1, color: C.level2),
           Expanded(
-            child: Column(
-              children: [
-                Expanded(child: _buildContent()),
-                const StatusBar(),
-              ],
+            child: DictateScreen(
+              settings: _settings,
+              onRestartSidecar: restartSidecar,
             ),
           ),
+          const StatusBar(),
         ],
       ),
     );
-  }
-
-  Widget _buildContent() {
-    switch (_section) {
-      case NavSection.dictate:
-        return DictateScreen(
-          settings: _settings,
-          onRestartSidecar: restartSidecar,
-        );
-      case NavSection.settings:
-        return SettingsScreen(settings: _settings);
-    }
   }
 
   @override

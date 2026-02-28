@@ -32,11 +32,9 @@ dependencies:
     sdk: flutter
 
   cupertino_icons: ^1.0.8
-  flutter_svg: ^2.0.17
   path_provider: ^2.1.5
   system_tray: ^2.0.3
   window_manager: ^0.4.3
-  lottie: ^3.3.1
 
 dev_dependencies:
   flutter_test:
@@ -64,11 +62,8 @@ flutter:
 
   assets:
     - assets/talkye-meet.png
-    - assets/navbar-icon.svg
     - assets/tray-dark.png
     - assets/tray-light.png
-    - assets/tray-live.png
-    - assets/vui-animation.json
 
   # To add assets to your application, add an assets section, like this:
   # assets:

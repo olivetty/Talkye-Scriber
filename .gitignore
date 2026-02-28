@@ -1,8 +1,3 @@
-# Rust
-/core/target/
-/wakeword/target/
-**/*.rs.bk
-
 # Flutter
 /app/.dart_tool/
 /app/.packages
@@ -10,15 +5,10 @@
 /app/.flutter-plugins
 /app/.flutter-plugins-dependencies
 
-# Python (prototype)
-prototype/venv/
-prototype/__pycache__/
-*.pyc
-
 # Python (sidecar)
 sidecar/venv/
-sidecar/venv-chatterbox/
 sidecar/__pycache__/
+*.pyc
 
 # Environment
 .env
@@ -35,18 +25,5 @@ sidecar/__pycache__/
 .DS_Store
 Thumbs.db
 
-# Models (large files)
-prototype/models/*.onnx
-!prototype/models/.gitkeep
-models/
-sidecar/models/*.onnx
-
-# Voice samples (keep originals)
-# prototype/voices/ is tracked
-
-# Pre-computed voice states (generated, not source)
-voices/*.safetensors
-voices/*.wav
-
-# whisper.cpp (compiled locally, not distributed)
+# whisper.cpp (compiled locally)
 whisper.cpp/
