@@ -102,13 +102,16 @@ Future<void> performUpdate(
 
   for (final url in urls) {
     final source = url.contains('cdn.talkye') ? 'CDN' : 'GitHub';
+    stderr.writeln('[UPDATER] Trying $source: $url');
     onProgress(0, 'Downloading v${info.version} ($source)...');
 
     try {
       await _downloadFile(url, tmpPath, info.version, source, onProgress);
+      stderr.writeln('[UPDATER] Download from $source succeeded');
       lastError = null;
       break; // success
     } catch (e) {
+      stderr.writeln('[UPDATER] $source failed: $e');
       lastError = '$source: $e';
       // Clean up failed download
       try {
@@ -150,8 +153,11 @@ Future<void> _downloadFile(
 ) async {
   final client = HttpClient();
   client.connectionTimeout = const Duration(seconds: 10);
+  client.autoUncompress = false; // don't decompress — we want raw bytes
   final request = await client.getUrl(Uri.parse(url));
-  final response = await request.close().timeout(const Duration(seconds: 15));
+  request.headers.set('User-Agent', 'TalkyeScriber/$appVersion');
+  request.headers.set('Accept-Encoding', 'identity'); // no gzip
+  final response = await request.close().timeout(const Duration(seconds: 30));
 
   if (response.statusCode != 200) {
     client.close();
