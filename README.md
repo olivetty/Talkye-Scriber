@@ -2,13 +2,13 @@
 
 Voice-to-text dictation for Linux. Hold a key, speak, release — text appears at your cursor. Works in any app.
 
-![Talkye Scriber](https://github.com/olivetty/Talkye-Meet-Assistant/raw/scriber/app-icon.png)
+![Talkye Scriber](https://github.com/olivetty/Talkye-Scriber/raw/scriber/app-icon.png)
 
 ## Download
 
 **[Download Talkye Scriber (Linux x86_64)](https://cdn.talkye.com/TalkyeScriber-x86_64.AppImage)**
 
-Or grab it from [GitHub Releases](https://github.com/olivetty/Talkye-Meet-Assistant/releases/latest).
+Or grab it from [GitHub Releases](https://github.com/olivetty/Talkye-Scriber/releases/latest).
 
 ```bash
 chmod +x TalkyeScriber-x86_64.AppImage

@@ -5,7 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'version.dart';
 
 const _repoOwner = 'olivetty';
-const _repoName = 'Talkye-Meet-Assistant';
+const _repoName = 'Talkye-Scriber';
 
 /// Primary CDN for fast downloads; GitHub Releases as fallback.
 const _cdnBase = 'https://cdn.talkye.com';
