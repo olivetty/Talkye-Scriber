@@ -46,8 +46,16 @@ git push origin scriber
 git push origin v0.X.0
 ```
 
-### 5. Create GitHub Release
-Use GitHub CLI (`gh`) or API:
+### 5. Create GitHub Release and upload to R2 CDN
+Upload to R2 (fast CDN — primary download source):
+```bash
+aws s3 cp TalkyeScriber-x86_64.AppImage \
+  s3://talkye/TalkyeScriber-x86_64.AppImage \
+  --endpoint-url https://c6a0e4dbb28340eab0e92e4568bd42f2.r2.cloudflarestorage.com
+```
+R2 credentials must be configured in `~/.aws/credentials` under profile `r2` or as env vars.
+
+Create GitHub Release (fallback download source):
 ```bash
 gh release create v0.X.0 \
   --repo olivetty/Talkye-Meet-Assistant \
@@ -90,9 +98,18 @@ curl -X POST \
 ## How auto-update works
 - `app/lib/updater.dart` checks `https://api.github.com/repos/olivetty/Talkye-Meet-Assistant/releases/latest`
 - Compares `tag_name` (e.g. `v0.4.0`) with `appVersion` in `version.dart`
-- If newer: shows green "Update v0.4.0" button in status bar
-- User clicks → downloads new AppImage → replaces current `$APPIMAGE` → restarts
+- If newer: shows green "Update v0.4.0" button in status bar + banner in main screen
+- User clicks → downloads from R2 CDN (primary), falls back to GitHub Releases if R2 fails
+- Downloads new AppImage → replaces current `$APPIMAGE` → clears PID lock → restarts
 - Only works when running as AppImage (dev mode shows nothing)
+- Periodic check every 4 hours (not just at startup)
+
+## CDN (Cloudflare R2)
+- Bucket: `talkye`
+- Public URL: `https://cdn.talkye.com/TalkyeScriber-x86_64.AppImage`
+- S3 endpoint: `https://c6a0e4dbb28340eab0e92e4568bd42f2.r2.cloudflarestorage.com`
+- Upload: `aws s3 cp` with R2 credentials or `wrangler r2 object put`
+- Zero egress fees, global CDN edge caching
 
 ## File locations
 - Version: `app/lib/version.dart`

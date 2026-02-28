@@ -6,15 +6,18 @@ import 'version.dart';
 const _repoOwner = 'olivetty';
 const _repoName = 'Talkye-Meet-Assistant';
 
+/// Primary CDN for fast downloads; GitHub Releases as fallback.
+const _cdnBase = 'https://cdn.talkye.com';
+const _appImageName = 'TalkyeScriber-x86_64.AppImage';
+
 class UpdateInfo {
   final String version;
-  final String downloadUrl;
-  final String body; // release notes
-  UpdateInfo({
-    required this.version,
-    required this.downloadUrl,
-    this.body = '',
-  });
+  final String githubUrl; // fallback download URL
+  final String body;
+  UpdateInfo({required this.version, required this.githubUrl, this.body = ''});
+
+  /// Primary: R2 CDN. Fallback: GitHub Releases.
+  String get cdnUrl => '$_cdnBase/$_appImageName';
 }
 
 /// Global notifier so any widget can react to available updates.
@@ -42,21 +45,20 @@ Future<UpdateInfo?> checkForUpdate() async {
     final tagName = (data['tag_name'] as String? ?? '').replaceFirst('v', '');
     if (tagName.isEmpty || !_isNewer(tagName, appVersion)) return null;
 
-    // Find AppImage asset
+    // Find AppImage asset URL (fallback)
     final assets = data['assets'] as List<dynamic>? ?? [];
-    String? downloadUrl;
+    String? githubUrl;
     for (final asset in assets) {
       final name = asset['name'] as String? ?? '';
       if (name.contains('AppImage') && name.contains('x86_64')) {
-        downloadUrl = asset['browser_download_url'] as String?;
+        githubUrl = asset['browser_download_url'] as String?;
         break;
       }
     }
-    if (downloadUrl == null) return null;
 
     return UpdateInfo(
       version: tagName,
-      downloadUrl: downloadUrl,
+      githubUrl: githubUrl ?? '',
       body: data['body'] as String? ?? '',
     );
   } catch (_) {
@@ -68,8 +70,12 @@ Future<UpdateInfo?> checkForUpdate() async {
 bool _isNewer(String remote, String local) {
   final r = remote.split('.').map((s) => int.tryParse(s) ?? 0).toList();
   final l = local.split('.').map((s) => int.tryParse(s) ?? 0).toList();
-  while (r.length < 3) r.add(0);
-  while (l.length < 3) l.add(0);
+  while (r.length < 3) {
+    r.add(0);
+  }
+  while (l.length < 3) {
+    l.add(0);
+  }
   for (var i = 0; i < 3; i++) {
     if (r[i] > l[i]) return true;
     if (r[i] < l[i]) return false;
@@ -78,6 +84,7 @@ bool _isNewer(String remote, String local) {
 }
 
 /// Download new AppImage and replace current one, then restart.
+/// Tries R2 CDN first, falls back to GitHub Releases.
 Future<void> performUpdate(
   UpdateInfo info,
   void Function(double progress, String status) onProgress,
@@ -88,31 +95,29 @@ Future<void> performUpdate(
   }
 
   final tmpPath = '$appImagePath.new';
-  onProgress(0, 'Downloading v${info.version}...');
 
-  final client = HttpClient();
-  client.connectionTimeout = const Duration(seconds: 15);
-  final request = await client.getUrl(Uri.parse(info.downloadUrl));
-  final response = await request.close();
+  // Try R2 CDN first, fallback to GitHub
+  final urls = [info.cdnUrl, if (info.githubUrl.isNotEmpty) info.githubUrl];
+  String? lastError;
 
-  if (response.statusCode != 200) {
-    throw Exception('HTTP ${response.statusCode}');
+  for (final url in urls) {
+    final source = url.contains('cdn.talkye') ? 'CDN' : 'GitHub';
+    onProgress(0, 'Downloading v${info.version} ($source)...');
+
+    try {
+      await _downloadFile(url, tmpPath, info.version, source, onProgress);
+      lastError = null;
+      break; // success
+    } catch (e) {
+      lastError = '$source: $e';
+      // Clean up failed download
+      try {
+        File(tmpPath).deleteSync();
+      } catch (_) {}
+    }
   }
 
-  final total = response.contentLength;
-  var downloaded = 0;
-  final sink = File(tmpPath).openWrite();
-
-  await for (final chunk in response) {
-    sink.add(chunk);
-    downloaded += chunk.length;
-    final pct = total > 0 ? downloaded / total : 0.0;
-    final mb = (downloaded / 1048576).toStringAsFixed(0);
-    final totalMb = (total / 1048576).toStringAsFixed(0);
-    onProgress(pct, 'Downloading v${info.version}... $mb / $totalMb MB');
-  }
-  await sink.close();
-  client.close();
+  if (lastError != null) throw Exception(lastError);
 
   onProgress(1.0, 'Installing...');
 
@@ -134,4 +139,37 @@ Future<void> performUpdate(
   await Process.start(appImagePath, [], mode: ProcessStartMode.detached);
   await Future.delayed(const Duration(seconds: 2));
   exit(0);
+}
+
+Future<void> _downloadFile(
+  String url,
+  String destPath,
+  String version,
+  String source,
+  void Function(double progress, String status) onProgress,
+) async {
+  final client = HttpClient();
+  client.connectionTimeout = const Duration(seconds: 10);
+  final request = await client.getUrl(Uri.parse(url));
+  final response = await request.close().timeout(const Duration(seconds: 15));
+
+  if (response.statusCode != 200) {
+    client.close();
+    throw Exception('HTTP ${response.statusCode}');
+  }
+
+  final total = response.contentLength;
+  var downloaded = 0;
+  final sink = File(destPath).openWrite();
+
+  await for (final chunk in response) {
+    sink.add(chunk);
+    downloaded += chunk.length;
+    final pct = total > 0 ? downloaded / total : 0.0;
+    final mb = (downloaded / 1048576).toStringAsFixed(0);
+    final totalMb = total > 0 ? (total / 1048576).toStringAsFixed(0) : '?';
+    onProgress(pct, 'Downloading v$version ($source)... $mb / $totalMb MB');
+  }
+  await sink.close();
+  client.close();
 }
