@@ -37,9 +37,10 @@ mkdir -p "$TOOLS_DIR"
 # ── Step 3: Copy Flutter bundle ──
 echo "[3/7] Copying Flutter bundle..."
 BUNDLE="$SCRIPT_DIR/app/build/linux/x64/release/bundle"
+# Flutter expects lib/ and data/ relative to the binary
 cp "$BUNDLE/talkye_app" "$APPDIR/usr/bin/"
-cp "$BUNDLE"/lib/*.so "$APPDIR/usr/lib/"
-cp -r "$BUNDLE/data" "$APPDIR/usr/"
+cp -r "$BUNDLE/lib" "$APPDIR/usr/bin/"
+cp -r "$BUNDLE/data" "$APPDIR/usr/bin/"
 echo "  ✓ Flutter bundle copied"
 
 # ── Step 4: Copy sidecar + whisper + sox ──
@@ -102,8 +103,8 @@ cat > "$APPDIR/AppRun" << 'APPRUN_EOF'
 #!/usr/bin/env bash
 APPDIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Flutter libs
-export LD_LIBRARY_PATH="$APPDIR/usr/lib:$APPDIR/usr/sox/lib:${LD_LIBRARY_PATH:-}"
+# Flutter libs (relative to binary in usr/bin/)
+export LD_LIBRARY_PATH="$APPDIR/usr/bin/lib:$APPDIR/usr/sox/lib:${LD_LIBRARY_PATH:-}"
 
 # Bundled tools for sidecar
 export TALKYE_WHISPER_BIN="$APPDIR/usr/whisper/whisper-cli"

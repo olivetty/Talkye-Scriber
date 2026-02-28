@@ -105,14 +105,27 @@ def _transcribe(audio_path: str, language: str = None) -> dict:
 # ── Whisper hallucination filter ──
 
 _HALLUCINATIONS = {
+    # Romanian
     "să vă mulțumim pentru vizionare", "mulțumim pentru vizionare",
-    "thank you for watching", "thanks for watching",
-    "subtitles by", "translated by",
-    "să vă mulțumesc pentru like", "mulțumesc pentru like",
     "vă mulțumesc pentru vizionare", "mulțumesc pentru vizionare",
+    "să vă mulțumesc pentru like", "mulțumesc pentru like",
     "să ne vedem la următoarea mea rețetă",
     "ne vedem la următoarea mea rețetă",
     "mulțumit pentru vizionare",
+    "vă mulțumim pentru vizionare",
+    "să vă mulțumim pentru vizionare!",
+    "mulțumesc pentru vizionare!",
+    # English
+    "thank you for watching", "thanks for watching",
+    "subtitles by", "translated by",
+    "thank you for listening", "thanks for listening",
+    "please subscribe", "like and subscribe",
+    # German
+    "danke fürs zuschauen", "vielen dank fürs zuschauen",
+    # French
+    "merci d'avoir regardé", "merci pour votre visionnage",
+    # Spanish
+    "gracias por ver", "gracias por mirar",
 }
 
 

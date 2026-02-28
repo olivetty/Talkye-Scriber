@@ -6,7 +6,9 @@
 set -e
 
 SIDECAR_DIR="$(cd "$(dirname "$0")" && pwd)"
-VENV_DIR="$SIDECAR_DIR/venv"
+
+# Venv goes in user home (AppImage is read-only)
+VENV_DIR="${TALKYE_VENV_DIR:-$SIDECAR_DIR/venv}"
 PYTHON="${VENV_DIR}/bin/python"
 PIP="${VENV_DIR}/bin/pip"
 
@@ -15,7 +17,8 @@ SYSTEM_PYTHON="${TALKYE_PYTHON:-python3}"
 
 # ── Create venv if needed ──
 if [ ! -f "$PYTHON" ]; then
-    echo "[setup] Creating Python venv (using $SYSTEM_PYTHON)..."
+    echo "[setup] Creating Python venv in $VENV_DIR (using $SYSTEM_PYTHON)..."
+    mkdir -p "$(dirname "$VENV_DIR")"
     "$SYSTEM_PYTHON" -m venv "$VENV_DIR"
 fi
 

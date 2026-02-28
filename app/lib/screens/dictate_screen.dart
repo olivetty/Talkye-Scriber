@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../main.dart';
 import '../theme.dart';
 import 'key_picker_dialog.dart';
@@ -139,10 +138,12 @@ class _DictateScreenState extends State<DictateScreen> {
 
   Future<void> _updateConfig(Map<String, dynamic> cfg) async {
     await _post('/dictate/config', cfg);
-    if (cfg.containsKey('trigger_key'))
+    if (cfg.containsKey('trigger_key')) {
       widget.settings.triggerKey = cfg['trigger_key'] as String;
-    if (cfg.containsKey('sound_theme'))
+    }
+    if (cfg.containsKey('sound_theme')) {
       widget.settings.soundTheme = cfg['sound_theme'] as String;
+    }
     widget.settings.save();
     _poll();
   }
@@ -302,7 +303,7 @@ class _DictateScreenState extends State<DictateScreen> {
                 ),
                 SizedBox(height: 4),
                 Text(
-                  'The background service starts automatically with the app.\nCheck Settings → Logs if it failed.',
+                  'The background service starts automatically with the app.\nRestart the app if it persists.',
                   style: TextStyle(color: C.textSub, fontSize: 12, height: 1.5),
                 ),
               ],

@@ -10,6 +10,7 @@ import 'theme.dart';
 import 'status_bar.dart';
 import 'screens/dictate_screen.dart';
 import 'screens/setup_screen.dart';
+import 'desktop_integration.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -269,6 +270,7 @@ class _AppShellState extends State<AppShell> with WindowListener {
     windowManager.addListener(this);
     _extractTrayIcons().then((_) => _initTray());
     _checkModelAndStart();
+    installDesktopEntry();
   }
 
   Future<void> _checkModelAndStart() async {
@@ -298,7 +300,7 @@ class _AppShellState extends State<AppShell> with WindowListener {
     // TALKYE_SIDECAR_DIR is set by AppRun in AppImage
     final envSidecar = Platform.environment['TALKYE_SIDECAR_DIR'];
     final candidates = [
-      if (envSidecar != null) envSidecar,
+      if (envSidecar case final dir?) dir,
       '$projectRoot/sidecar',
       '${Platform.environment['HOME']}/Code/talkye-meet/sidecar',
       '${Directory.current.path}/sidecar',
@@ -336,7 +338,13 @@ class _AppShellState extends State<AppShell> with WindowListener {
 
     // Use bundled Python if available (TALKYE_PYTHON set by AppRun)
     final bundledPython = Platform.environment['TALKYE_PYTHON'];
-    final venvPython = '$sidecarDir/venv/bin/python';
+    final isAppImage = Platform.environment['APPIMAGE'] != null;
+    final home = Platform.environment['HOME'] ?? '/tmp';
+    // AppImage is read-only, so venv goes in user home
+    final venvDir = isAppImage
+        ? '$home/.config/talkye/sidecar-venv'
+        : '$sidecarDir/venv';
+    final venvPython = '$venvDir/bin/python';
 
     LogBuffer.add('SIDECAR: running setup...');
     try {
@@ -344,6 +352,7 @@ class _AppShellState extends State<AppShell> with WindowListener {
       if (bundledPython != null) {
         setupEnv['TALKYE_PYTHON'] = bundledPython;
       }
+      setupEnv['TALKYE_VENV_DIR'] = venvDir;
       final setupResult = await Process.run(
         'bash',
         ['$sidecarDir/setup.sh'],
@@ -365,7 +374,7 @@ class _AppShellState extends State<AppShell> with WindowListener {
 
     LogBuffer.add('SIDECAR: starting on :8179...');
     try {
-      _sidecar = await Process.start('$sidecarDir/venv/bin/uvicorn', [
+      _sidecar = await Process.start('$venvDir/bin/uvicorn', [
         'server:app',
         '--host',
         '127.0.0.1',

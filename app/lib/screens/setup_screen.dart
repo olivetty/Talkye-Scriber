@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:lottie/lottie.dart';
 import '../theme.dart';
 
 const _modelUrl =
@@ -37,7 +38,6 @@ class _SetupScreenState extends State<SetupScreen> {
   Future<void> _checkAndDownload() async {
     final file = File(_modelPath);
     if (await file.exists() && await file.length() > 100000000) {
-      // Model exists and is reasonably sized (>100MB)
       widget.onSetupComplete();
       return;
     }
@@ -81,7 +81,6 @@ class _SetupScreenState extends State<SetupScreen> {
       await sink.close();
       client.close();
 
-      // Rename temp to final
       await tmpFile.rename(_modelPath);
 
       if (mounted) {
@@ -89,7 +88,6 @@ class _SetupScreenState extends State<SetupScreen> {
           _status = 'Ready';
           _downloading = false;
         });
-        // Small delay so user sees "Ready"
         await Future.delayed(const Duration(milliseconds: 500));
         widget.onSetupComplete();
       }
@@ -120,6 +118,12 @@ class _SetupScreenState extends State<SetupScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            SizedBox(
+              width: 120,
+              height: 120,
+              child: Lottie.asset('assets/vui-animation.json'),
+            ),
+            const SizedBox(height: 24),
             const Text(
               'Talkye Scriber',
               style: TextStyle(
@@ -134,15 +138,18 @@ class _SetupScreenState extends State<SetupScreen> {
               'First-time setup',
               style: TextStyle(fontSize: 13, color: C.textSub),
             ),
-            const SizedBox(height: 40),
+            const SizedBox(height: 32),
             if (_downloading) ...[
-              ClipRRect(
-                borderRadius: BorderRadius.circular(6),
-                child: LinearProgressIndicator(
-                  value: _progress > 0 ? _progress : null,
-                  minHeight: 6,
-                  backgroundColor: C.level2,
-                  valueColor: const AlwaysStoppedAnimation<Color>(C.accent),
+              SizedBox(
+                width: 280,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: LinearProgressIndicator(
+                    value: _progress > 0 ? _progress : null,
+                    minHeight: 6,
+                    backgroundColor: C.level2,
+                    valueColor: const AlwaysStoppedAnimation<Color>(C.accent),
+                  ),
                 ),
               ),
               const SizedBox(height: 16),

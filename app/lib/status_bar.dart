@@ -9,10 +9,10 @@ import 'updater.dart';
 class StatusBar extends StatefulWidget {
   const StatusBar({super.key});
   @override
-  State<StatusBar> createState() => StatusBarState();
+  State<StatusBar> createState() => _StatusBarState();
 }
 
-class StatusBarState extends State<StatusBar> {
+class _StatusBarState extends State<StatusBar> {
   Timer? _timer;
   int _ramMB = 0;
   double _cpuPct = 0;
