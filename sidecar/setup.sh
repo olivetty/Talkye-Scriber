@@ -15,8 +15,18 @@ PIP="${VENV_DIR}/bin/pip"
 # Use bundled Python if available (set by AppRun in AppImage)
 SYSTEM_PYTHON="${TALKYE_PYTHON:-python3}"
 
-# ── Create venv if needed ──
-if [ ! -f "$PYTHON" ]; then
+# ── Create venv if needed (or recreate if broken) ──
+NEED_VENV=0
+if [ ! -e "$PYTHON" ]; then
+    NEED_VENV=1
+elif ! "$PYTHON" -c "import sys" 2>/dev/null; then
+    # Venv python is broken (e.g. stale symlink from old AppImage mount)
+    echo "[setup] Venv python broken, recreating..."
+    rm -rf "$VENV_DIR"
+    NEED_VENV=1
+fi
+
+if [ "$NEED_VENV" = "1" ]; then
     echo "[setup] Creating Python venv in $VENV_DIR (using $SYSTEM_PYTHON)..."
     mkdir -p "$(dirname "$VENV_DIR")"
     "$SYSTEM_PYTHON" -m venv "$VENV_DIR"
