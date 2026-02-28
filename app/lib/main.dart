@@ -14,6 +14,9 @@ import 'screens/setup_screen.dart';
 import 'desktop_integration.dart';
 
 Future<void> main() async {
+  // Single-instance guard: if already running, activate existing window and exit
+  if (await _activateExistingInstance()) exit(0);
+
   WidgetsFlutterBinding.ensureInitialized();
   await windowManager.ensureInitialized();
 
@@ -33,7 +36,45 @@ Future<void> main() async {
     await windowManager.focus();
   });
 
+  // Write our PID so future launches know we're running
+  _writePidFile();
+
   runApp(const TalkyeApp());
+}
+
+File get _pidFile {
+  final home = Platform.environment['HOME'] ?? '/tmp';
+  return File('$home/.config/talkye/app.pid');
+}
+
+void _writePidFile() {
+  try {
+    _pidFile.parent.createSync(recursive: true);
+    _pidFile.writeAsStringSync('$pid');
+  } catch (_) {}
+}
+
+Future<bool> _activateExistingInstance() async {
+  try {
+    if (!_pidFile.existsSync()) return false;
+    final existingPid = int.tryParse(_pidFile.readAsStringSync().trim());
+    if (existingPid == null || existingPid == pid) return false;
+
+    // Check if process is alive
+    final procDir = Directory('/proc/$existingPid');
+    if (!procDir.existsSync()) return false;
+
+    // It's alive — bring its window to front
+    await Process.run('xdotool', [
+      'search',
+      '--name',
+      'Talkye Scriber',
+      'windowactivate',
+    ]);
+    return true;
+  } catch (_) {
+    return false;
+  }
 }
 
 class TalkyeApp extends StatelessWidget {
@@ -578,6 +619,9 @@ class _AppShellState extends State<AppShell> with WindowListener {
         label: 'Quit',
         onClicked: (_) async {
           _stopSidecar();
+          try {
+            _pidFile.deleteSync();
+          } catch (_) {}
           await windowManager.setPreventClose(false);
           await windowManager.close();
         },
@@ -755,6 +799,9 @@ class _AppShellState extends State<AppShell> with WindowListener {
   @override
   void dispose() {
     _stopSidecar();
+    try {
+      _pidFile.deleteSync();
+    } catch (_) {}
     windowManager.removeListener(this);
     super.dispose();
   }
