@@ -330,8 +330,12 @@ class _AppShellState extends State<AppShell> with WindowListener {
         final body = await resp.transform(utf8.decoder).join();
         client.close();
         if (body.contains('"ok"')) {
-          LogBuffer.add('SIDECAR: already running on :8179');
-          return;
+          // Kill orphaned sidecar from previous run — it may have stale paths
+          LogBuffer.add('SIDECAR: killing orphaned instance on :8179');
+          try {
+            await Process.run('pkill', ['-f', 'uvicorn.*server:app.*8179']);
+            await Future.delayed(const Duration(seconds: 1));
+          } catch (_) {}
         }
       } catch (_) {}
     }
@@ -374,13 +378,14 @@ class _AppShellState extends State<AppShell> with WindowListener {
 
     LogBuffer.add('SIDECAR: starting on :8179...');
     try {
-      _sidecar = await Process.start('$venvDir/bin/uvicorn', [
-        'server:app',
-        '--host',
-        '127.0.0.1',
-        '--port',
-        '8179',
-      ], workingDirectory: sidecarDir);
+      final sidecarEnv = Map<String, String>.from(Platform.environment);
+      sidecarEnv['TALKYE_SIDECAR_DIR'] = sidecarDir;
+      _sidecar = await Process.start(
+        '$venvDir/bin/uvicorn',
+        ['server:app', '--host', '127.0.0.1', '--port', '8179'],
+        workingDirectory: sidecarDir,
+        environment: sidecarEnv,
+      );
       _sidecar!.stdout.transform(utf8.decoder).listen((line) {
         for (final l in line.split('\n')) {
           if (l.trim().isNotEmpty) LogBuffer.add('SIDECAR: $l');

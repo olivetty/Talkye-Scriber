@@ -36,7 +36,7 @@ Future<void> installDesktopEntry() async {
 Name=Talkye Scriber
 Comment=Voice-to-text dictation tool
 Exec=$appImagePath
-Icon=talkye-scriber
+Icon=$iconFile
 Type=Application
 Categories=Utility;Accessibility;Audio;
 StartupWMClass=com.talkye.meet

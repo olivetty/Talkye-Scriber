@@ -14,8 +14,8 @@ from platform_utils import user_env, notify
 logger = logging.getLogger(__name__)
 
 # Voice sound themes live in sidecar/sounds/<theme>/start.wav, stop.wav
-_VOICE_THEMES = {"alex", "luna", "emma", "sofia"}
-_SIDECAR_DIR = Path(__file__).resolve().parent
+_VOICE_THEMES = {"alex", "emma"}
+_SIDECAR_DIR = Path(os.environ.get("TALKYE_SIDECAR_DIR", "")) if os.environ.get("TALKYE_SIDECAR_DIR") else Path(__file__).resolve().parent
 
 
 def generate_sounds():
