@@ -102,6 +102,12 @@ fi
 cp -r "$PYTHON_DIR/python/"* "$APPDIR/usr/python/"
 echo "  ✓ Python bundled"
 
+# Install sidecar deps into bundled Python (no venv needed at runtime)
+echo "  Installing sidecar dependencies into bundled Python..."
+"$APPDIR/usr/python/bin/python3" -m pip install -q \
+  -r "$APPDIR/usr/sidecar/requirements-base.txt" 2>&1 | tail -5
+echo "  ✓ Python deps installed"
+
 # ── Step 6: Create AppRun + .desktop + icon ──
 echo "[6/7] Creating AppRun, .desktop, icon..."
 

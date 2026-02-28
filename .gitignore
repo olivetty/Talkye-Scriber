@@ -31,3 +31,4 @@ whisper.cpp/
 # AppImage build
 .appimage-build/
 TalkyeScriber-*.AppImage
+squashfs-root/

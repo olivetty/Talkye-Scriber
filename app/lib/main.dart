@@ -396,37 +396,47 @@ class _AppShellState extends State<AppShell> with WindowListener {
     // Use bundled Python if available (TALKYE_PYTHON set by AppRun)
     final bundledPython = Platform.environment['TALKYE_PYTHON'];
     final isAppImage = Platform.environment['APPIMAGE'] != null;
-    final home = Platform.environment['HOME'] ?? '/tmp';
-    // AppImage is read-only, so venv goes in user home
-    final venvDir = isAppImage
-        ? '$home/.config/talkye/sidecar-venv'
-        : '$sidecarDir/venv';
-    final venvPython = '$venvDir/bin/python';
 
-    LogBuffer.add('SIDECAR: running setup...');
-    try {
-      final setupEnv = Map<String, String>.from(Platform.environment);
-      if (bundledPython != null) {
-        setupEnv['TALKYE_PYTHON'] = bundledPython;
-      }
-      setupEnv['TALKYE_VENV_DIR'] = venvDir;
-      final setupResult = await Process.run(
-        'bash',
-        ['$sidecarDir/setup.sh'],
-        workingDirectory: sidecarDir,
-        environment: setupEnv,
-      ).timeout(const Duration(minutes: 3));
-      if (setupResult.exitCode != 0) {
-        LogBuffer.add('SIDECAR: setup failed: ${setupResult.stderr}');
-        if (!await File(venvPython).exists()) return;
-      } else {
-        for (final line in (setupResult.stdout as String).split('\n')) {
-          if (line.trim().isNotEmpty) LogBuffer.add('SIDECAR: $line');
+    String uvicornBin;
+    List<String> uvicornArgs;
+
+    if (isAppImage && bundledPython != null) {
+      // AppImage: deps are pre-installed in bundled Python, no venv needed
+      LogBuffer.add('SIDECAR: AppImage mode, using bundled Python');
+      uvicornBin = bundledPython;
+      uvicornArgs = [
+        '-m',
+        'uvicorn',
+        'server:app',
+        '--host',
+        '127.0.0.1',
+        '--port',
+        '8179',
+      ];
+    } else {
+      // Dev mode: use local venv
+      final venvDir = '$sidecarDir/venv';
+      final venvPython = '$venvDir/bin/python';
+
+      LogBuffer.add('SIDECAR: dev mode, running setup...');
+      try {
+        final setupResult = await Process.run('bash', [
+          '$sidecarDir/setup.sh',
+        ], workingDirectory: sidecarDir).timeout(const Duration(minutes: 3));
+        if (setupResult.exitCode != 0) {
+          LogBuffer.add('SIDECAR: setup failed: ${setupResult.stderr}');
+          if (!await File(venvPython).exists()) return;
+        } else {
+          for (final line in (setupResult.stdout as String).split('\n')) {
+            if (line.trim().isNotEmpty) LogBuffer.add('SIDECAR: $line');
+          }
         }
+      } on TimeoutException {
+        LogBuffer.add('SIDECAR: setup.sh timed out after 3 minutes');
+        if (!await File(venvPython).exists()) return;
       }
-    } on TimeoutException {
-      LogBuffer.add('SIDECAR: setup.sh timed out after 3 minutes');
-      if (!await File(venvPython).exists()) return;
+      uvicornBin = '$venvDir/bin/uvicorn';
+      uvicornArgs = ['server:app', '--host', '127.0.0.1', '--port', '8179'];
     }
 
     LogBuffer.add('SIDECAR: starting on :8179...');
@@ -434,18 +444,18 @@ class _AppShellState extends State<AppShell> with WindowListener {
       final sidecarEnv = Map<String, String>.from(Platform.environment);
       sidecarEnv['TALKYE_SIDECAR_DIR'] = sidecarDir;
       _sidecar = await Process.start(
-        '$venvDir/bin/uvicorn',
-        ['server:app', '--host', '127.0.0.1', '--port', '8179'],
+        uvicornBin,
+        uvicornArgs,
         workingDirectory: sidecarDir,
         environment: sidecarEnv,
       );
       // Write sidecar output to log file for debugging
+      final home = Platform.environment['HOME'] ?? '/tmp';
       final logFile = File('$home/.config/talkye/sidecar.log');
       final logSink = logFile.openWrite(mode: FileMode.write);
       logSink.writeln(
         '[${DateTime.now()}] Sidecar starting (PID ${_sidecar!.pid})',
       );
-      logSink.writeln('[${DateTime.now()}] venv: $venvDir');
       logSink.writeln('[${DateTime.now()}] sidecarDir: $sidecarDir');
       _sidecar!.stdout.transform(utf8.decoder).listen((line) {
         for (final l in line.split('\n')) {
