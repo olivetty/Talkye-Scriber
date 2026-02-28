@@ -1,225 +1,306 @@
 # Talkye Meet — Architecture
 
-Real-time voice translation for video calls. Speak your language, others hear theirs — in your voice.
-Downloadable app for Mac + Linux. $20/month subscription.
+AI Meeting Assistant. Capturează audio-ul unui meeting, identifică cine vorbește,
+transcrie per speaker, și generează un summary trimis la un endpoint.
+
+Aplicație desktop (Linux + macOS). Totul local, fără bot în meeting.
+
 
 ## System Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  Flutter UI (Phase 4)                                           │
-│  System tray · on/off · language selector · voice enrollment    │
+│  Flutter UI                                                      │
+│  Meeting transcript · speaker labels · start/stop · export       │
 └──────────────────────┬──────────────────────────────────────────┘
                        │ flutter_rust_bridge (FFI)
 ┌──────────────────────▼──────────────────────────────────────────┐
-│  Rust Core Engine (core/)                                       │
-│                                                                 │
-│  config.rs ─── All settings from .env, single source of truth   │
-│                                                                 │
-│  audio/                                                         │
-│  ├── capture.rs ──── Mic input via cpal (16kHz mono PCM)        │
-│  ├── playback.rs ─── Speaker output via cpal                    │
-│  └── virtual_device.rs ── PulseAudio null-sinks (Phase 2)       │
-│                                                                 │
-│  stt/                                                           │
-│  ├── mod.rs ──────── SttBackend trait + factory                 │
-│  ├── deepgram.rs ─── Deepgram Nova-3 WebSocket (dev/testing)    │
-│  └── parakeet.rs ─── Local STT via parakeet-rs (production)     │
-│                                                                 │
-│  vad.rs ─────── Silero VAD V5 neural voice activity detection   │
-│                                                                 │
-│  translate.rs ── Groq LLM translation with context window       │
-│  tts/         ── TTS backend abstraction                        │
-│    mod.rs ──── TtsBackend trait + factory (pocket | chatterbox) │
-│    pocket.rs ─ Pocket TTS (CPU, English, voice clone)           │
-│    sidecar.rs  Chatterbox sidecar (GPU, 23 langs, voice clone)  │
-│  pipeline.rs ── Orchestration: accumulator + parallel translate  │
+│  Rust Core Engine (core/)                                        │
+│                                                                  │
+│  config.rs ─── Settings (.env + Flutter overrides)               │
+│                                                                  │
+│  audio/                                                          │
+│  ├── capture.rs ──── Mic/system audio via cpal (16kHz mono PCM)  │
+│  └── virtual.rs ──── PulseAudio routing (system audio capture)   │
+│                                                                  │
+│  vad.rs ─────── Silero VAD V5 — speech segment detection         │
+│                                                                  │
+│  stt/                                                            │
+│  ├── mod.rs ──────── SttBackend trait + factory                  │
+│  ├── deepgram.rs ─── Deepgram Nova-3 WebSocket (dev/testing)     │
+│  └── parakeet.rs ─── Local STT via parakeet-rs (production)      │
+│                                                                  │
+│  diarize.rs ──── WeSpeaker embeddings + speaker clustering       │
+│  session.rs ──── Meeting session store (transcript + speakers)   │
+│  summary.rs ──── LLM summary generation (Groq)                  │
+│  export.rs ───── POST meeting data to endpoint                   │
+│                                                                  │
+│  pipeline.rs ── Orchestration: capture → VAD → STT + embed →     │
+│                 attribute → store → summary → export              │
+│                                                                  │
+│  engine.rs ──── Public API for Flutter (start/stop/events)       │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-## Data Flow (Phase 1 — CLI)
+
+## Data Flow — Meeting Assistant
 
 ```
-Mic (cpal)
-  │ AudioChunk (Vec<u8>, 16-bit PCM, 16kHz mono)
+Audio Capture (cpal, 16kHz mono)
+  │
   ▼
-STT Backend (configurable: deepgram | parakeet)
-  │ SttEvent (Interim | Final { words, speech_final } | UtteranceEnd)
+Silero VAD V5 — detectează segmente de speech
+  │
+  │ Speech Segment (start_ms, end_ms, audio PCM)
   ▼
-Accumulator (in pipeline.rs)
-  │ Collects words from Finals
-  │ First flush: 4 words (fast response)
-  │ Subsequent: 5 words
-  │ Timeout flush: 1.5s safety net
-  │ Immediate flush on speech_final / utterance_end
+┌─────────────────────────────────┐
+│  Parallel (tokio tasks)         │
+│                                 │
+│  Parakeet STT ──→ text          │
+│  WeSpeaker ──────→ embedding    │
+└────────────┬────────────────────┘
+             │
+             ▼
+Speaker Attribution
+  │ Cosine similarity vs known speakers
+  │ Threshold ~0.65 → same speaker / new speaker
+  │
   ▼
-Parallel Translator (3 concurrent, ordered output)
-  │ String (translated text)
+Attributed Segment
+  { speaker: "Speaker 1", text: "...", start_ms, end_ms }
+  │
   ▼
-Pocket TTS (streaming, clause splitting, voice clone)
-  │ PCM f32 chunks (streamed per clause)
-  ▼
-Speaker (cpal, streaming ring buffer)
+Session Store (in-memory Vec<TranscriptSegment>)
+  │
+  ├──→ Live UI (Flutter, real-time scroll)
+  │
+  └──→ End of Meeting
+        │
+        ▼
+  LLM Summary (Groq, llama-3.3-70b)
+        │
+        ▼
+  Export POST (endpoint configurabil)
 ```
 
-Every arrow is a `tokio::mpsc` channel. Components don't know about each other — only the pipeline connects them.
+Fiecare săgeată e un `tokio::mpsc` channel. Componentele nu se cunosc între ele —
+doar pipeline-ul le conectează.
 
-## Data Flow (Phase 2+3 — Call Integration)
 
-```
-OUTGOING (you → them):
-  Real Mic → STT → Translate(RO→EN) → TTS(your voice) → Virtual Mic → Meet sends
+## Componente
 
-INCOMING (them → you):
-  Meet → Virtual Speaker → STT → Translate(EN→RO) → TTS(default) → Real Speakers
-```
+### Audio Capture (existent)
+- `cpal` pentru I/O audio cross-platform
+- 16kHz mono PCM (16-bit)
+- Suportă: mic fizic, system audio (PulseAudio monitor)
+- Virtual audio routing pentru capturarea audio-ului din meeting
 
-Two independent pipeline instances. Zero feedback loop:
-- Outgoing TTS → virtual mic only (Meet hears, you don't)
-- Incoming TTS → real speakers only (you hear, Meet doesn't)
+### VAD — Voice Activity Detection (existent)
+- Silero VAD V5 (ONNX, 2.2MB, ~1ms/chunk)
+- Detectează segmente de speech vs silence
+- Output: speech segments cu timestamps
 
-## Virtual Audio Routing (Google Meet)
+### STT — Speech-to-Text (existent)
+- Dual backend: Parakeet TDT v3 (local, $0) sau Deepgram Nova-3 (cloud, $0.26/hr)
+- Switchable via `STT_BACKEND` în .env
+- Ambele emit aceleași `SttEvent` types
+- Parakeet: 25 limbi europene, 600M params, ONNX
+- Deepgram: 36+ limbi, streaming WebSocket
 
-Current working setup using PulseAudio/PipeWire modules:
+### Diarizare — Speaker Identification (NOU)
+- WeSpeaker ResNet34 (ONNX, ~25MB)
+- Extrage embedding vector (256 dim) per speech segment
+- Cosine similarity pentru clustering
+- ~5-10ms per segment pe CPU
+- Max ~10 speakeri simultani
 
-```
-TTS (cpal) ──→ talkye_combined (combine-sink)
-                  ├──→ Real Speakers (you hear directly)
-                  └──→ talkye_out (null-sink)
-                          └──→ talkye_out.monitor
-                                  └──→ talkye_mic (virtual-source)
-                                          └──→ Google Meet microphone
-```
+### Session Store (NOU)
+- In-memory durante meeting
+- Persist la final: `~/.talkye/meetings/{id}.json`
+- Structuri: MeetingSession, Participant, TranscriptSegment
 
-Setup commands (ephemeral — lost on reboot):
-```bash
-# 1. Null sink for Meet to read from
-pactl load-module module-null-sink sink_name=talkye_out
+### LLM Summary (NOU)
+- Groq API (llama-3.3-70b-versatile)
+- Un singur call la finalul meeting-ului
+- Output: topics, decisions, action items, next steps
+- Cost: ~$0.001-0.005 per meeting
 
-# 2. Combined sink: sends to both your speakers AND talkye_out
-pactl load-module module-combine-sink sink_name=talkye_combined \
-  slaves=<your_speaker_sink>,talkye_out
+### Export (NOU)
+- POST request cu meeting data (JSON)
+- Endpoint + API key configurabile
+- Include: summary, action items, full transcript, participants
 
-# 3. Virtual mic source (browsers see this as a microphone)
-pactl load-module module-virtual-source source_name=talkye_mic \
-  master=talkye_out.monitor source_properties=device.description="Talkye_Mic"
-
-# Find your speaker sink name:
-pactl list short sinks
-```
-
-In Google Meet: Settings → Audio → Microphone → "Talkye_Mic".
-
-Playback uses pre-buffering (150ms) to prevent underruns between TTS chunks.
-Routing done via `pactl move-sink-input` after first cpal stream starts.
-
-## Phase Roadmap
-
-### Phase 1: CLI Pipeline ✅ COMPLETE (Feb 2026)
-Replicate `prototype/test_deepgram.py` in Rust.
-- `cargo run --release` → speak Romanian → hear English on speakers
-- Voice clone with Oliver's voice (pre-computed .safetensors)
-- Accumulator: 3w first flush, 5w subsequent, 1.5s timeout
-- Parallel translation (3 concurrent, ordered output)
-- Dual STT: Parakeet TDT v3 (local, production) + Deepgram (dev)
-- Silero VAD V5 for speech detection + smart flush + overlap buffer
-- Streaming TTS playback with 150ms pre-buffer
-- Virtual audio routing to Google Meet via PulseAudio
-
-Deliverable: working CLI binary. End-to-end latency ~2-3s.
-See `docs/phase1-complete.md` for full technical decisions.
-
-### Phase 2: Virtual Audio Devices
-- Create PulseAudio null-sinks on startup, remove on exit
-- Route TTS output to virtual mic (call app reads it)
-- User sets "Interpreter Mic" + "Interpreter Speaker" in Zoom once
-
-Deliverable: works with any video call app on Linux.
-
-### Phase 3: Bidirectional Translation
-- Two pipeline instances running in parallel
-- Incoming: virtual speaker monitor → STT → translate → TTS → speakers
-- Auto voice cloning of remote speaker (Chatterbox prepare_conditionals)
-- Language pair configurable per direction
-- Voice caching in Chatterbox worker for fast switching
-
-Deliverable: full duplex — both sides hear translations in cloned voices.
-See `docs/bidirectional-interpreter.md` for detailed design.
-
-### Phase 4: Flutter UI
-- flutter_rust_bridge FFI
-- System tray icon with on/off toggle
-- Language selector, voice enrollment
-- Status: connected, translating, error
-- Settings persistence
-
-Deliverable: installable desktop app.
-
-## Key Decisions
-
-| Decision | Choice | Why |
-|---|---|---|
-| Audio I/O | cpal | Cross-platform, compiles into binary, no external deps |
-| Virtual devices | libpulse-binding | Programmatic PulseAudio control (Phase 2) |
-| Config format | .env (dotenvy) | Simple, proven, user edits one file |
-| Translation concurrency | 3 parallel + ordered | Reduces latency when multiple fragments queue up |
-| TTS engine | pocket-tts + Chatterbox | Pocket: CPU, English, Rust nativ. Chatterbox: GPU, 23 langs, voice clone, streaming via Python sidecar |
-| STT (production) | parakeet-rs (Parakeet TDT v3) | Local, 25 EU langs, 600M params, ONNX, $0 |
-| VAD | Silero VAD V5 (ONNX) | Neural speech detection, 2.2MB, ~1ms/chunk |
-| STT (dev/testing) | Deepgram Nova-3 | Best streaming quality, good for comparison |
-| LLM translation | Groq (Llama 3.3 70B) | ~150ms, cheap ($0.02/hr), good quality |
-| Product model | $20/month subscription | 84-97% margin depending on usage |
-
-## STT Backend Strategy
-
-Two backends, switchable via `STT_BACKEND` in `.env`:
-
-| Backend | Use case | Cost | Latency | Languages |
-|---|---|---|---|---|
-| `parakeet` | Production (app) | $0 | ~1-3s | 25 EU (incl. RO) |
-| `deepgram` | Dev/testing | $0.26/hr | ~0.3-0.5s | 36+ |
-
-Both emit the same `SttEvent` types → pipeline doesn't change.
-See `docs/local-stt-research.md` for full research.
 
 ## Module Responsibilities
 
-| File | Responsibility | Depends on |
+| File | Responsabilitate | Status |
 |---|---|---|
-| `config.rs` | Load .env, validate, expose typed Config struct | nothing |
-| `audio/capture.rs` | Open mic, stream PCM chunks via channel | config |
-| `audio/playback.rs` | Streaming ring buffer playback on speaker | config |
-| `audio/virtual_device.rs` | Create/destroy PulseAudio null-sinks | config (Phase 2) |
-| `stt/mod.rs` | SttBackend trait, factory, SttEvent types | config |
-| `stt/deepgram.rs` | Deepgram WebSocket: send audio, emit SttEvents | config |
-| `stt/parakeet.rs` | Local STT via parakeet-rs + Silero VAD | config, vad |
-| `vad.rs` | Silero VAD V5 neural voice activity detection | config |
-| `translate.rs` | Groq API: translate text with context window | config |
-| `tts/mod.rs` | TTS backend trait + factory (pocket \| chatterbox) | config |
-| `tts/pocket.rs` | Pocket TTS: CPU, English, streaming | config |
-| `tts/sidecar.rs` | Chatterbox via HTTP SSE (GPU, 23 langs, voice clone) | config |
-| `pipeline.rs` | Wire everything: accumulator + parallel translate | all above |
+| `config.rs` | Load .env, validate, expose Config struct | Existent — de extins |
+| `audio/capture.rs` | Mic/system audio, stream PCM chunks | Existent |
+| `audio/virtual.rs` | PulseAudio routing | Existent |
+| `vad.rs` | Silero VAD V5 speech detection | Existent |
+| `stt/mod.rs` | SttBackend trait, factory, SttEvent types | Existent |
+| `stt/deepgram.rs` | Deepgram WebSocket streaming | Existent |
+| `stt/parakeet.rs` | Local STT via parakeet-rs | Existent |
+| `diarize.rs` | WeSpeaker embeddings + speaker clustering | NOU |
+| `session.rs` | Meeting session store + persistence | NOU |
+| `summary.rs` | Groq LLM summary generation | NOU |
+| `export.rs` | POST meeting data to endpoint | NOU |
+| `pipeline.rs` | Wire everything together | De rescris |
+| `engine.rs` | Public API for Flutter | De extins |
 
-## Prototype Mapping
-
-| Python (prototype/) | Rust (core/src/) | Notes |
+### Module depreciate (din faza interpreter)
+| File | Era | Acum |
 |---|---|---|
-| `test_deepgram.py` main() | `pipeline.rs` Pipeline::run() | Entry point, wiring |
-| `test_deepgram.py` on_message() | `stt.rs` SttClient::run() | Deepgram event parsing |
-| `test_deepgram.py` flush_accum() | `pipeline.rs` accumulator logic | Word accumulation + threshold |
-| `test_deepgram.py` translate_worker() | `translate.rs` + `pipeline.rs` | Parallel with ordering |
-| `test_deepgram.py` tts_worker() | `tts.rs` TtsEngine | Sequential playback |
-| `test_deepgram.py` speak_pocket() | `tts.rs` + `audio/playback.rs` | Generate + play |
-| `test_deepgram.py` find_source() | `audio/capture.rs` | Device selection |
+| `translate.rs` | Groq LLM translation | De eliminat |
+| `tts/` | Pocket TTS + Chatterbox | De eliminat |
+| `voice.rs` | Voice cloning | De eliminat |
+| `accumulator.rs` | Word batching for translation | De eliminat |
+| `audio/playback.rs` | Speaker output for TTS | De eliminat |
 
-## Cost
 
-| Component | Where | Cost/hour |
+## Modele ONNX
+
+| Model | Size | Scop | Status |
+|---|---|---|---|
+| Parakeet TDT v3 | ~2.4GB | Local STT (25 limbi EU) | Existent |
+| Silero VAD V5 | ~2.2MB | Speech detection | Existent |
+| WeSpeaker ResNet34 | ~25MB | Speaker embeddings | De adăugat |
+
+
+## STT Backend Strategy
+
+Două backend-uri, switchable via `STT_BACKEND`:
+
+| Backend | Use case | Cost | Latency | Languages |
+|---|---|---|---|---|
+| `parakeet` | Production | $0 | ~1-3s | 25 EU |
+| `deepgram` | Dev/testing | $0.26/hr | ~0.3-0.5s | 36+ |
+
+Ambele emit aceleași `SttEvent` types → pipeline-ul nu se schimbă.
+
+
+## Cost Model
+
+| Component | Unde | Cost/meeting (1h) |
 |---|---|---|
-| STT | Local (parakeet-rs) | $0 |
-| Translation | Cloud (Groq) | ~$0.02 |
-| TTS | Local (pocket-tts) | $0 |
-| **Total** | | **~$0.02/hour** |
+| STT | Local (Parakeet) | $0 |
+| VAD | Local (Silero) | $0 |
+| Diarizare | Local (WeSpeaker) | $0 |
+| Summary | Cloud (Groq) | ~$0.005 |
+| **Total** | | **~$0.005/meeting** |
 
-Revenue: $20/user/month. Margin: 84-97%.
-See docs/cost-analysis.md for detailed breakdown.
+Cu Deepgram STT: +$0.26/hr.
+
+
+## Flutter UI — Meeting Assistant
+
+```
+┌──────────────────────────────────┐
+│  ● Meeting Assistant        LIVE │
+│  Weekly Standup                  │
+│  3 participants                  │
+├──────────────────────────────────┤
+│                                  │
+│  [Oliver] 00:01                  │
+│  Bună ziua, azi discutăm        │
+│  despre lansarea produsului      │
+│                                  │
+│  [Maria] 02:15                   │
+│  Eu am terminat design-ul       │
+│                                  │
+│  [Alex] 03:42                    │
+│  Trebuie să vorbim și despre    │
+│  buget                           │
+│                                  │
+│  ● Oliver vorbește...            │
+├──────────────────────────────────┤
+│  [Stop] [Summary] [Export]       │
+└──────────────────────────────────┘
+```
+
+
+## FFI API (Flutter ↔ Rust)
+
+### Funcții păstrate
+- `start_engine(config, sink)` — pornește pipeline-ul
+- `stop_engine()` — oprește pipeline-ul
+- `is_engine_running()` — status
+- `list_input_devices()` — enumerate audio devices
+- `check_models(...)` — verifică modele pe disk
+
+### Funcții noi (meeting assistant)
+- `get_meeting_session(id)` — returnează sesiunea curentă
+- `list_speaker_profiles()` — profile de voce cunoscute
+- `rename_speaker(session_id, speaker_id, name)` — redenumire speaker
+- `generate_summary(session_id)` — generează summary
+- `export_meeting(session_id, endpoint, api_key)` — export POST
+
+### Funcții de eliminat (interpreter)
+- `list_voices`, `record_voice`, `precompute_voice`, `preview_voice`
+- `play_preview`, `delete_voice`, `voices_dir`, `list_builtin_voices`
+
+### Events (Rust → Flutter)
+
+```rust
+enum EngineEvent {
+    StatusChanged { status: String },
+    // NOU: segment atribuit unui speaker
+    TranscriptSegment {
+        speaker_id: u8,
+        speaker_name: String,
+        text: String,
+        start_ms: u64,
+        end_ms: u64,
+    },
+    // NOU: speaker nou detectat
+    SpeakerDetected {
+        speaker_id: u8,
+        suggested_name: String,
+    },
+    Error { message: String },
+    Log { level: String, message: String },
+}
+```
+
+
+## Faze de implementare
+
+### Faza 1: Diarizare de bază
+1. Integrăm WeSpeaker ONNX pentru speaker embeddings
+2. Speaker clustering cu cosine similarity
+3. Pipeline nou: VAD → STT + Embedding → Attributed transcript
+4. UI simplă cu transcript per speaker
+5. Participant names manual
+
+### Faza 2: Summary + Export
+1. LLM summary la finalul meeting-ului (Groq)
+2. Export POST la endpoint configurabil
+3. Meeting history (lista meeting-uri anterioare)
+
+### Faza 3: Google Integration
+1. Sign In with Google în Flutter
+2. Google Calendar API — lista meeting-uri + attendees
+3. Auto-match speakers cu attendees
+4. Voice profile database
+
+### Faza 4: Polish
+1. Voice enrollment flow (guided)
+2. Meeting templates
+3. Keyboard shortcuts (start/stop/mark)
+4. Error recovery și performance tuning
+
+
+## Key Decisions
+
+| Decizie | Alegere | De ce |
+|---|---|---|
+| Audio I/O | cpal | Cross-platform, no external deps |
+| STT (production) | Parakeet TDT v3 | Local, 25 EU langs, $0 |
+| STT (dev) | Deepgram Nova-3 | Best streaming quality |
+| VAD | Silero V5 | Neural, 2.2MB, ~1ms/chunk |
+| Speaker embeddings | WeSpeaker ResNet34 | ONNX, CPU, ~5ms/segment |
+| Summary LLM | Groq (Llama 3.3 70B) | ~150ms, $0.005/meeting |
+| Config | .env (dotenvy) | Simple, proven |
+| Async runtime | Tokio | Channels, tasks, timers |
+| FFI bridge | flutter_rust_bridge | Proven, async streaming |

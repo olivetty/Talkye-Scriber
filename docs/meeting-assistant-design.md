@@ -1,12 +1,31 @@
 # Meeting Assistant — Design Document
 
+> **Status:** Acesta este documentul principal de specificație.
+> Pivotul de la Live Interpreter la Meeting Assistant — Februarie 2026.
+> Arhitectura tehnică: vezi [architecture.md](architecture.md)
+
 ## Overview
 
-Mode 2 al Talkye Meet: capturezi audio-ul unui meeting (Google Meet, Zoom, orice),
-identifici cine vorbeste (diarizare), transcrii per speaker, si la final generezi
-un summary pe care il poti trimite la un endpoint.
+Talkye Meet devine un AI Meeting Assistant. Capturezi audio-ul unui meeting
+(Google Meet, Zoom, Teams, orice), identifici cine vorbește (diarizare),
+transcrii per speaker, și la final generezi un summary pe care îl trimiți
+la un endpoint.
 
-Totul local, fara bot in meeting. Aplicatia sta pe desktop-ul tau si asculta.
+Totul local, fără bot în meeting. Aplicația stă pe desktop și ascultă.
+
+### Ce reutilizăm din faza anterioară (Live Interpreter)
+- Audio capture (cpal, 16kHz mono PCM)
+- Silero VAD V5 (speech detection)
+- Parakeet TDT v3 / Deepgram Nova-3 (STT)
+- Config system (.env + dotenvy)
+- Engine API structure (start/stop/events)
+- Flutter app shell, sidebar, status bar, theme
+
+### Ce eliminăm
+- Translation (Groq LLM translate) → înlocuit cu Summary
+- TTS (Pocket + Chatterbox) → nu mai e nevoie
+- Voice cloning → nu mai e nevoie
+- Accumulator (word batching) → logică diferită pentru diarizare
 
 
 ## Arhitectura

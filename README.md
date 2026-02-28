@@ -1,57 +1,86 @@
-# Talkye Meet — Real-Time Voice Translation for Video Calls
+# Talkye Meet — AI Meeting Assistant
 
-Speak your language, others hear theirs — in your voice.
+Înregistrează meeting-uri, identifică cine vorbește, transcrie per speaker,
+și generează un summary pe care îl trimite la un endpoint.
 
-Join a Zoom/Meet/Teams call. Speak Romanian. The other person hears English — in your voice, in real-time. No interpreter needed. Only you install the app.
+Totul local, fără bot în meeting. Aplicația stă pe desktop și ascultă.
 
-## Architecture
+## Ce face
+
+1. **Capturează audio** — system audio sau mic, orice meeting platform
+2. **Diarizare** — identifică speakerii prin voice embeddings (wespeaker)
+3. **Transcrie** — speech-to-text per speaker (Parakeet TDT local sau Deepgram)
+4. **Summary** — la finalul meeting-ului, LLM generează summary structurat
+5. **Export** — trimite summary + transcript la un endpoint configurabil
+
+## Arhitectura
 
 ```
-Flutter UI (tray icon, settings)
-    │ flutter_rust_bridge (FFI)
-    ▼
-Rust Core Engine
-    ├── Audio I/O (cpal + virtual devices)
-    ├── Deepgram STT (WebSocket streaming)
-    ├── Groq LLM Translation
-    └── Pocket TTS (voice cloning, local CPU)
+┌─────────────────────────────────────────────────────────┐
+│  Flutter UI (desktop)                                    │
+│  Meeting transcript · speaker labels · controls          │
+└──────────────────────┬──────────────────────────────────┘
+                       │ flutter_rust_bridge (FFI)
+┌──────────────────────▼──────────────────────────────────┐
+│  Rust Core Engine                                        │
+│                                                          │
+│  Audio Capture (cpal) → Silero VAD → Speech Segments     │
+│                                          │               │
+│                                    ┌─────┴─────┐        │
+│                                    │           │         │
+│                              Parakeet STT  WeSpeaker     │
+│                              (transcript)  (embedding)   │
+│                                    │           │         │
+│                                    └─────┬─────┘        │
+│                                          │               │
+│                                  Speaker Attribution     │
+│                                          │               │
+│                                  Session Transcript      │
+│                                          │               │
+│                                    ┌─────┴─────┐        │
+│                                    │           │         │
+│                              LLM Summary  Export POST    │
+└─────────────────────────────────────────────────────────┘
 ```
 
-## Audio Routing
-
-Two virtual audio devices (Krisp-style):
-- **Interpreter Mic** — your translated voice → call app sends to others
-- **Interpreter Speaker** — call app output → translated to your language → your speakers
-
-Zero feedback loop. Streams are completely separate.
-
-## Project Structure
+## Structura proiectului
 
 ```
 talkye-meet/
-├── core/          # Rust crate — translation engine
-├── app/           # Flutter UI (coming soon)
-├── prototype/     # Python prototype (read-only reference)
-└── docs/          # Product documentation
+├── core/          # Rust — engine (audio, VAD, STT, diarizare, summary)
+├── app/           # Flutter — desktop UI
+├── models/        # ONNX models (parakeet-tdt, silero_vad, wespeaker)
+└── docs/          # Documentație
 ```
 
-## MVP
+## Platforme meeting suportate
 
-- Linux + macOS (no Windows — virtual audio requires signed kernel driver)
-- RO ↔ EN
-- ~2-2.5s latency target (sound-to-sound)
-- ~$0.52/hour per direction (Deepgram STT + Groq translate, TTS is free local)
+Orice platformă — capturăm system audio, nu ne integrăm cu API-ul lor:
+- Google Meet
+- Zoom
+- Microsoft Teams
+- Discord
+- Orice altceva
 
-## Setup
+## Setup (development)
 
 ```bash
 cp .env.example .env
-# Edit .env with your API keys
+# Editează .env cu API keys
 
 cd core
-cargo build
-cargo run
+cargo build --release
+cargo run --release
 ```
+
+## Documentație
+
+| Document | Descriere |
+|---|---|
+| [Architecture](docs/architecture.md) | Arhitectura tehnică completă |
+| [Meeting Assistant Design](docs/meeting-assistant-design.md) | Specificația detaliată |
+| [Local STT Research](docs/local-stt-research.md) | Comparație Parakeet vs Deepgram |
+| [Desktop Dictation](docs/desktop-dictation.md) | Modul Scriber (push-to-talk) |
 
 ## License
 
