@@ -10,12 +10,12 @@ Dark mode only. No light theme.
 
 ## Accent Color
 
-Purple/Violet — brand color throughout the entire app.
-- Primary: `#8B5CF6` (violet-500)
-- Light: `#A78BFA` (violet-400) — hover, active indicators
-- Dark: `#7C3AED` (violet-600) — pressed states
+Green — brand color throughout the entire app.
+- Primary: `#4ADE80` (green-400)
+- Light: `#86EFAC` (green-300) — hover, active indicators
+- Dark: `#22C55E` (green-500) — pressed states
 
-Green is ONLY used for success/status indicators (e.g. "Active" badge, "Listening" dot).
+Purple is no longer used as accent.
 
 ## Elevation System
 

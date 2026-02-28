@@ -4,17 +4,17 @@ import 'package:flutter/material.dart';
 // ── Talkye Meet Design System — Dark Only, Purple Accent, Elevation-based ──
 
 class C {
-  // Accent (purple/violet brand)
-  static const accent = Color(0xFF8B5CF6);
-  static const accentLight = Color(0xFFA78BFA);
-  static const accentDark = Color(0xFF7C3AED);
+  // Accent (green brand)
+  static const accent = Color(0xFF4ADE80);
+  static const accentLight = Color(0xFF86EFAC);
+  static const accentDark = Color(0xFF22C55E);
 
   // Elevation levels (no borders — differentiate by shade)
-  static const bg = Color(0xFF1E1F22);         // base (0dp)
-  static const level1 = Color(0xFF252629);      // sidebar, cards (1dp)
-  static const level2 = Color(0xFF2C2D32);      // elevated cards, hover (3dp)
-  static const level3 = Color(0xFF323438);      // active, dialogs (6dp)
-  static const level4 = Color(0xFF393C41);      // tooltips, popovers (8dp)
+  static const bg = Color(0xFF1E1F22); // base (0dp)
+  static const level1 = Color(0xFF252629); // sidebar, cards (1dp)
+  static const level2 = Color(0xFF2C2D32); // elevated cards, hover (3dp)
+  static const level3 = Color(0xFF323438); // active, dialogs (6dp)
+  static const level4 = Color(0xFF393C41); // tooltips, popovers (8dp)
 
   // Glass
   static Color glass = const Color(0xFF1E1F22).withAlpha(170); // ~67% opacity
@@ -41,6 +41,7 @@ final appTheme = ThemeData(
   scaffoldBackgroundColor: C.bg,
   colorScheme: const ColorScheme.dark(
     primary: C.accent,
+    secondary: C.accentLight,
     surface: C.bg,
     onSurface: C.text,
     error: C.error,

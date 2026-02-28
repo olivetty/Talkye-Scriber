@@ -14,9 +14,21 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await windowManager.ensureInitialized();
 
-  await windowManager.setTitle('Talkye Scriber');
-  await windowManager.setPreventClose(true);
-  await windowManager.show();
+  const windowOptions = WindowOptions(
+    size: Size(960, 680),
+    minimumSize: Size(800, 560),
+    center: true,
+    backgroundColor: Colors.transparent,
+    titleBarStyle: TitleBarStyle.hidden,
+    windowButtonVisibility: false,
+  );
+
+  windowManager.waitUntilReadyToShow(windowOptions, () async {
+    await windowManager.setTitle('Talkye Scriber');
+    await windowManager.setPreventClose(true);
+    await windowManager.show();
+    await windowManager.focus();
+  });
 
   runApp(const TalkyeApp());
 }
@@ -91,6 +103,71 @@ class AppSettings {
     } catch (e) {
       stderr.writeln('WARNING: Failed to save settings: $e');
     }
+  }
+}
+
+/// Custom title bar — draggable, with window controls.
+class _TitleBar extends StatelessWidget {
+  const _TitleBar();
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onPanStart: (_) => windowManager.startDragging(),
+      child: Container(
+        height: 38,
+        color: C.bg,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Row(
+          children: [
+            // Window controls (macOS-style colored dots)
+            _windowBtn(const Color(0xFFFF5F57), () async {
+              await windowManager.hide();
+            }),
+            const SizedBox(width: 6),
+            _windowBtn(const Color(0xFFFFBD2E), () async {
+              await windowManager.minimize();
+            }),
+            const SizedBox(width: 6),
+            _windowBtn(const Color(0xFF28C840), () async {
+              if (await windowManager.isMaximized()) {
+                await windowManager.unmaximize();
+              } else {
+                await windowManager.maximize();
+              }
+            }),
+            const Expanded(
+              child: Center(
+                child: Text(
+                  'Talkye Scriber',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: C.textSub,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ),
+            // Balance the row (same width as 3 dots + gaps)
+            const SizedBox(width: 42),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static Widget _windowBtn(Color color, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: Container(
+          width: 12,
+          height: 12,
+          decoration: BoxDecoration(shape: BoxShape.circle, color: color),
+        ),
+      ),
+    );
   }
 }
 
@@ -372,17 +449,115 @@ class _AppShellState extends State<AppShell> with WindowListener {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Column(
-        children: [
-          Expanded(
-            child: DictateScreen(
-              settings: _settings,
-              onRestartSidecar: restartSidecar,
+    return Stack(
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Scaffold(
+            body: Column(
+              children: [
+                const _TitleBar(),
+                Expanded(
+                  child: DictateScreen(
+                    settings: _settings,
+                    onRestartSidecar: restartSidecar,
+                  ),
+                ),
+                const StatusBar(),
+              ],
             ),
           ),
-          const StatusBar(),
-        ],
+        ),
+        // Resize edges — invisible hit areas on all sides
+        ..._resizeEdges(),
+      ],
+    );
+  }
+
+  List<Widget> _resizeEdges() {
+    const e = 4.0; // edge thickness
+    return [
+      // Top
+      Positioned(
+        top: 0,
+        left: e,
+        right: e,
+        height: e,
+        child: _resizeArea(SystemMouseCursors.resizeUp, ResizeEdge.top),
+      ),
+      // Bottom
+      Positioned(
+        bottom: 0,
+        left: e,
+        right: e,
+        height: e,
+        child: _resizeArea(SystemMouseCursors.resizeDown, ResizeEdge.bottom),
+      ),
+      // Left
+      Positioned(
+        left: 0,
+        top: e,
+        bottom: e,
+        width: e,
+        child: _resizeArea(SystemMouseCursors.resizeLeft, ResizeEdge.left),
+      ),
+      // Right
+      Positioned(
+        right: 0,
+        top: e,
+        bottom: e,
+        width: e,
+        child: _resizeArea(SystemMouseCursors.resizeRight, ResizeEdge.right),
+      ),
+      // Top-left
+      Positioned(
+        top: 0,
+        left: 0,
+        width: e * 2,
+        height: e * 2,
+        child: _resizeArea(SystemMouseCursors.resizeUpLeft, ResizeEdge.topLeft),
+      ),
+      // Top-right
+      Positioned(
+        top: 0,
+        right: 0,
+        width: e * 2,
+        height: e * 2,
+        child: _resizeArea(
+          SystemMouseCursors.resizeUpRight,
+          ResizeEdge.topRight,
+        ),
+      ),
+      // Bottom-left
+      Positioned(
+        bottom: 0,
+        left: 0,
+        width: e * 2,
+        height: e * 2,
+        child: _resizeArea(
+          SystemMouseCursors.resizeDownLeft,
+          ResizeEdge.bottomLeft,
+        ),
+      ),
+      // Bottom-right
+      Positioned(
+        bottom: 0,
+        right: 0,
+        width: e * 2,
+        height: e * 2,
+        child: _resizeArea(
+          SystemMouseCursors.resizeDownRight,
+          ResizeEdge.bottomRight,
+        ),
+      ),
+    ];
+  }
+
+  Widget _resizeArea(MouseCursor cursor, ResizeEdge edge) {
+    return MouseRegion(
+      cursor: cursor,
+      child: GestureDetector(
+        onPanStart: (_) => windowManager.startResizing(edge),
       ),
     );
   }
