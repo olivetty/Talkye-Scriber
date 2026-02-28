@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:system_tray/system_tray.dart';
 import 'package:window_manager/window_manager.dart';
+import 'package:lottie/lottie.dart';
 import 'theme.dart';
 import 'status_bar.dart';
 import 'screens/dictate_screen.dart';
@@ -255,6 +256,7 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> with WindowListener {
   late final AppSettings _settings;
   bool _setupDone = false;
+  bool _sidecarReady = false;
 
   // System tray
   final SystemTray _tray = SystemTray();
@@ -279,14 +281,37 @@ class _AppShellState extends State<AppShell> with WindowListener {
     final modelFile = File(modelPath);
     if (await modelFile.exists() && await modelFile.length() > 100000000) {
       setState(() => _setupDone = true);
-      _startSidecar();
+      await _startSidecar();
+      await _waitForSidecar();
     }
     // If model missing, SetupScreen will show and call _onSetupComplete when done
   }
 
   void _onSetupComplete() {
     setState(() => _setupDone = true);
-    _startSidecar();
+    _startSidecar().then((_) => _waitForSidecar());
+  }
+
+  Future<void> _waitForSidecar() async {
+    for (var i = 0; i < 60; i++) {
+      await Future.delayed(const Duration(milliseconds: 500));
+      try {
+        final client = HttpClient()
+          ..connectionTimeout = const Duration(seconds: 1);
+        final req = await client.getUrl(
+          Uri.parse('http://127.0.0.1:8179/health'),
+        );
+        final resp = await req.close().timeout(const Duration(seconds: 2));
+        final body = await resp.transform(utf8.decoder).join();
+        client.close();
+        if (body.contains('"ok"')) {
+          if (mounted) setState(() => _sidecarReady = true);
+          return;
+        }
+      } catch (_) {}
+    }
+    // Timeout — show dictate screen anyway (will show offline banner)
+    if (mounted) setState(() => _sidecarReady = true);
   }
 
   // ── Python Sidecar ──
@@ -489,6 +514,36 @@ class _AppShellState extends State<AppShell> with WindowListener {
   @override
   void onWindowClose() async => await windowManager.hide();
 
+  Widget _loadingScreen() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 120,
+            height: 120,
+            child: Lottie.asset('assets/vui-animation.json'),
+          ),
+          const SizedBox(height: 24),
+          const Text(
+            'Talkye Scriber',
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w700,
+              color: C.text,
+              letterSpacing: -0.5,
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Starting...',
+            style: TextStyle(fontSize: 13, color: C.textSub),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ── Build ──
 
   @override
@@ -502,12 +557,14 @@ class _AppShellState extends State<AppShell> with WindowListener {
               children: [
                 const _TitleBar(),
                 Expanded(
-                  child: _setupDone
-                      ? DictateScreen(
+                  child: !_setupDone
+                      ? SetupScreen(onSetupComplete: _onSetupComplete)
+                      : !_sidecarReady
+                      ? _loadingScreen()
+                      : DictateScreen(
                           settings: _settings,
                           onRestartSidecar: restartSidecar,
-                        )
-                      : SetupScreen(onSetupComplete: _onSetupComplete),
+                        ),
                 ),
                 if (_setupDone) const StatusBar(),
               ],
