@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -151,31 +152,56 @@ Future<void> _downloadFile(
   String source,
   void Function(double progress, String status) onProgress,
 ) async {
-  final client = HttpClient();
-  client.connectionTimeout = const Duration(seconds: 10);
-  client.autoUncompress = false; // don't decompress — we want raw bytes
-  final request = await client.getUrl(Uri.parse(url));
-  request.headers.set('User-Agent', 'TalkyeScriber/$appVersion');
-  request.headers.set('Accept-Encoding', 'identity'); // no gzip
-  final response = await request.close().timeout(const Duration(seconds: 30));
+  // Use curl for fast downloads — Dart HttpClient is too slow for large files
+  final process = await Process.start('curl', [
+    '-fSL', // fail on error, show error, follow redirects
+    '--output', destPath,
+    '--write-out', '%{size_download}\n',
+    '-#', // progress bar to stderr
+    url,
+  ]);
 
-  if (response.statusCode != 200) {
-    client.close();
-    throw Exception('HTTP ${response.statusCode}');
+  // Parse curl progress from stderr (# style: percentage)
+  int? totalBytes;
+  // First, get content-length via HEAD request
+  try {
+    final head = await Process.run('curl', ['-sI', url]);
+    final match = RegExp(
+      r'content-length:\s*(\d+)',
+      caseSensitive: false,
+    ).firstMatch(head.stdout as String);
+    if (match != null) totalBytes = int.tryParse(match.group(1)!);
+  } catch (_) {}
+
+  // Monitor file size growth for progress
+  final destFile = File(destPath);
+  Timer? progressTimer;
+  progressTimer = Timer.periodic(const Duration(milliseconds: 300), (_) {
+    try {
+      if (destFile.existsSync()) {
+        final size = destFile.lengthSync();
+        final pct = totalBytes != null && totalBytes > 0
+            ? size / totalBytes
+            : 0.0;
+        final mb = (size / 1048576).toStringAsFixed(0);
+        final totalMb = totalBytes != null
+            ? (totalBytes / 1048576).toStringAsFixed(0)
+            : '?';
+        onProgress(pct, 'Downloading v$version ($source)... $mb / $totalMb MB');
+      }
+    } catch (_) {}
+  });
+
+  // Drain stdout/stderr so process doesn't block
+  process.stdout.drain<void>();
+  process.stderr.drain<void>();
+
+  final exitCode = await process.exitCode;
+  progressTimer.cancel();
+
+  if (exitCode != 0) {
+    throw Exception('curl exit code $exitCode');
   }
 
-  final total = response.contentLength;
-  var downloaded = 0;
-  final sink = File(destPath).openWrite();
-
-  await for (final chunk in response) {
-    sink.add(chunk);
-    downloaded += chunk.length;
-    final pct = total > 0 ? downloaded / total : 0.0;
-    final mb = (downloaded / 1048576).toStringAsFixed(0);
-    final totalMb = total > 0 ? (total / 1048576).toStringAsFixed(0) : '?';
-    onProgress(pct, 'Downloading v$version ($source)... $mb / $totalMb MB');
-  }
-  await sink.close();
-  client.close();
+  onProgress(1.0, 'Download complete');
 }
