@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:system_tray/system_tray.dart';
 import 'package:window_manager/window_manager.dart';
 import 'theme.dart';
+import 'status_bar.dart';
 import 'screens/dictate_screen.dart';
 
 Future<void> main() async {
@@ -372,9 +373,16 @@ class _AppShellState extends State<AppShell> with WindowListener {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: DictateScreen(
-        settings: _settings,
-        onRestartSidecar: restartSidecar,
+      body: Column(
+        children: [
+          Expanded(
+            child: DictateScreen(
+              settings: _settings,
+              onRestartSidecar: restartSidecar,
+            ),
+          ),
+          const StatusBar(),
+        ],
       ),
     );
   }

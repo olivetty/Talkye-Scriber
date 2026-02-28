@@ -9,6 +9,24 @@ import 'key_picker_dialog.dart';
 
 const _baseUrl = 'http://127.0.0.1:8179';
 
+const _voiceCommands = [
+  ('enter', 'Press Enter'),
+  ('delete', 'Delete character'),
+  ('delete_word', 'Delete word'),
+  ('undo', 'Undo'),
+  ('redo', 'Redo'),
+  ('copy', 'Copy'),
+  ('paste', 'Paste'),
+  ('cut', 'Cut'),
+  ('select_all', 'Select all'),
+  ('save', 'Save'),
+  ('tab', 'Tab'),
+  ('escape', 'Escape'),
+  ('period', 'Insert .'),
+  ('comma', 'Insert ,'),
+  ('question_mark', 'Insert ?'),
+];
+
 class DictateScreen extends StatefulWidget {
   final AppSettings settings;
   final Future<void> Function() onRestartSidecar;
@@ -26,12 +44,14 @@ class _DictateScreenState extends State<DictateScreen> {
   bool _pttRunning = false;
   bool _recording = false;
   bool _busy = false;
+  bool _commandsExpanded = false;
   bool _settingsExpanded = false;
   String _language = 'auto';
   String _triggerKey = 'KEY_RIGHTCTRL';
   String _soundTheme = 'subtle';
   Timer? _pollTimer;
 
+  // Groq key
   late TextEditingController _groqCtrl;
   bool _groqObscured = true;
   bool _groqSaved = false;
@@ -103,12 +123,14 @@ class _DictateScreenState extends State<DictateScreen> {
           _language = s['language'] as String? ?? 'auto';
           _triggerKey = s['trigger_key'] as String? ?? 'KEY_RIGHTCTRL';
           _soundTheme = s['sound_theme'] as String? ?? 'subtle';
-          final st = s['dictate_translate'] as bool? ?? false;
-          if (widget.settings.dictateTranslate != st)
-            widget.settings.dictateTranslate = st;
-          final sg = s['dictate_grammar'] as bool? ?? false;
-          if (widget.settings.dictateGrammar != sg)
-            widget.settings.dictateGrammar = sg;
+          final sidecarTranslate = s['dictate_translate'] as bool? ?? false;
+          if (widget.settings.dictateTranslate != sidecarTranslate) {
+            widget.settings.dictateTranslate = sidecarTranslate;
+          }
+          final sidecarGrammar = s['dictate_grammar'] as bool? ?? false;
+          if (widget.settings.dictateGrammar != sidecarGrammar) {
+            widget.settings.dictateGrammar = sidecarGrammar;
+          }
         });
       }
     } else {
@@ -156,33 +178,35 @@ class _DictateScreenState extends State<DictateScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.all(24),
+    return Column(
       children: [
-        _header(),
-        const SizedBox(height: 6),
-        const Text(
-          'Hold a key, speak, release — text appears at your cursor.',
-          style: TextStyle(fontSize: 12, color: C.textSub, height: 1.4),
-        ),
-        const SizedBox(height: 20),
-        if (!_connected)
-          _offlineBanner()
-        else ...[
-          _statusBanner(),
-          const SizedBox(height: 16),
-          _dictationSection(),
-        ],
-        const SizedBox(height: 24),
-        _settingsSection(),
-        const SizedBox(height: 16),
-        Center(
-          child: Text(
-            'Talkye Scriber v0.3.0',
-            style: TextStyle(fontSize: 10, color: C.textMuted.withAlpha(120)),
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.all(24),
+            children: [
+              _header(),
+              const SizedBox(height: 6),
+              const Text(
+                'Type anywhere with your voice. Hold a key, speak, release — text appears at your cursor.',
+                style: TextStyle(fontSize: 12, color: C.textSub, height: 1.4),
+              ),
+              const SizedBox(height: 20),
+              if (!_connected)
+                _offlineBanner()
+              else ...[
+                _statusRow(),
+                const SizedBox(height: 16),
+                _pttSection(),
+                const SizedBox(height: 16),
+                _generalSection(),
+                const SizedBox(height: 16),
+                _commandsSection(),
+              ],
+              const SizedBox(height: 24),
+              _settingsSection(),
+            ],
           ),
         ),
-        const SizedBox(height: 8),
       ],
     );
   }
@@ -236,43 +260,27 @@ class _DictateScreenState extends State<DictateScreen> {
     );
   }
 
-  Widget _statusBanner() {
-    final Color color;
-    final String label;
-    final IconData icon;
-    if (_recording) {
-      color = C.error;
-      label = 'Recording...';
-      icon = Icons.mic_rounded;
-    } else if (_busy) {
-      color = C.warning;
-      label = 'Transcribing...';
-      icon = Icons.hearing_rounded;
-    } else {
-      color = C.success;
-      label = 'Ready — hold trigger key to speak';
-      icon = Icons.check_circle_outline_rounded;
-    }
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: color.withAlpha(12),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, size: 16, color: color.withAlpha(180)),
-          const SizedBox(width: 10),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              color: color,
-              fontWeight: FontWeight.w500,
-            ),
+  Widget _statusRow() {
+    return Row(
+      children: [
+        Container(
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: _recording ? C.error : (_busy ? C.warning : C.success),
           ),
-        ],
-      ),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          _recording ? 'Recording' : (_busy ? 'Transcribing' : 'Ready'),
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w500,
+            color: _recording ? C.error : (_busy ? C.warning : C.success),
+          ),
+        ),
+      ],
     );
   }
 
@@ -306,7 +314,7 @@ class _DictateScreenState extends State<DictateScreen> {
                 ),
                 SizedBox(height: 4),
                 Text(
-                  'The background service starts automatically with the app.\nOpen the debug console below if it failed.',
+                  'The background service starts automatically with the app.\nCheck Settings → Logs if it failed.',
                   style: TextStyle(color: C.textSub, fontSize: 12, height: 1.5),
                 ),
               ],
@@ -317,9 +325,9 @@ class _DictateScreenState extends State<DictateScreen> {
     );
   }
 
-  // ── Dictation (merged PTT + General) ──
+  // ── Push to Talk ──
 
-  Widget _dictationSection() {
+  Widget _pttSection() {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -329,15 +337,21 @@ class _DictateScreenState extends State<DictateScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          const Text(
+            'Push to Talk',
+            style: TextStyle(
+              color: C.text,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Hold a key to record, release to transcribe',
+            style: TextStyle(fontSize: 11, color: C.textSub, height: 1.3),
+          ),
+          const SizedBox(height: 14),
           _row('Trigger Key', _triggerKeyWidget()),
-          const SizedBox(height: 12),
-          _row('Language', _langDropdown()),
-          const SizedBox(height: 12),
-          _row('Sound', _soundDropdown()),
-          const SizedBox(height: 12),
-          _row('Translate', _translateToggle()),
-          const SizedBox(height: 12),
-          _row('Grammar Fix', _grammarToggle()),
         ],
       ),
     );
@@ -379,6 +393,129 @@ class _DictateScreenState extends State<DictateScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  // ── General ──
+
+  Widget _generalSection() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: C.level1,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'General',
+            style: TextStyle(
+              color: C.text,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 14),
+          _row('Language', _langDropdown()),
+          const SizedBox(height: 12),
+          _row('Sound', _soundDropdown()),
+          const SizedBox(height: 12),
+          _row('Translate', _translateToggle()),
+          const SizedBox(height: 12),
+          _row('Grammar Fix', _grammarToggle()),
+        ],
+      ),
+    );
+  }
+
+  // ── Voice Commands ──
+
+  Widget _commandsSection() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: C.level1,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          GestureDetector(
+            onTap: () => setState(() => _commandsExpanded = !_commandsExpanded),
+            child: MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Voice Commands',
+                          style: TextStyle(
+                            color: C.text,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          'Say commands like "enter", "delete", "undo" in any language',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: C.textSub,
+                            height: 1.3,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(
+                    _commandsExpanded
+                        ? Icons.expand_less_rounded
+                        : Icons.expand_more_rounded,
+                    size: 18,
+                    color: C.textMuted,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_commandsExpanded) ...[
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: _voiceCommands
+                  .map(
+                    (cmd) => Tooltip(
+                      message: cmd.$2,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: C.level2,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          cmd.$1,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: C.textSub,
+                            fontFamily: 'monospace',
+                          ),
+                        ),
+                      ),
+                    ),
+                  )
+                  .toList(),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -436,8 +573,9 @@ class _DictateScreenState extends State<DictateScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // Groq API Key
                   const Text(
-                    'GROQ API KEY',
+                    'LLM POST-PROCESSING',
                     style: TextStyle(
                       fontSize: 10,
                       color: C.textMuted,
@@ -445,9 +583,9 @@ class _DictateScreenState extends State<DictateScreen> {
                       letterSpacing: 1,
                     ),
                   ),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 8),
                   const Text(
-                    'Needed for Translate and Grammar Fix. Free at groq.com',
+                    'Groq API key for Translate and Grammar Fix.\nGet one free at groq.com/console',
                     style: TextStyle(
                       fontSize: 11,
                       color: C.textSub,
@@ -535,7 +673,38 @@ class _DictateScreenState extends State<DictateScreen> {
                     ],
                   ),
                   const SizedBox(height: 20),
-                  _DebugPanel(),
+                  // Audio + About
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: _miniCard('AUDIO', [
+                          _infoRow('Input', 'Default mic'),
+                          _infoRow('Output', 'Default speaker'),
+                        ]),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _miniCard('ABOUT', [
+                          _infoRow('App', 'v0.3.0'),
+                          _infoRow('Sidecar', 'Python/Uvicorn'),
+                        ]),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  // Debug Console
+                  const Text(
+                    'DIAGNOSTICS',
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: C.textMuted,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 1,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const _DebugPanel(),
                 ],
               ),
             ),
@@ -545,108 +714,257 @@ class _DictateScreenState extends State<DictateScreen> {
     );
   }
 
-  // ── Helper widgets ──
+  Widget _miniCard(String title, List<Widget> children) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: C.bg,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 10,
+              color: C.textMuted,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 1,
+            ),
+          ),
+          const SizedBox(height: 8),
+          ...children,
+        ],
+      ),
+    );
+  }
 
-  Widget _row(String label, Widget trailing) {
+  Widget _infoRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 56,
+            child: Text(
+              label,
+              style: const TextStyle(fontSize: 11, color: C.textSub),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(fontSize: 11, color: C.text),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Shared widgets ──
+
+  Widget _row(String label, Widget child) {
     return Row(
       children: [
-        Text(label, style: const TextStyle(fontSize: 12, color: C.textSub)),
-        const Spacer(),
-        trailing,
+        Expanded(
+          child: Text(
+            label,
+            style: const TextStyle(color: C.textSub, fontSize: 12),
+          ),
+        ),
+        child,
       ],
     );
   }
 
   Widget _langDropdown() {
-    final langs = {
-      'auto': 'Auto-detect',
-      'en': 'English',
-      'ro': 'Romanian',
-      'de': 'German',
-      'fr': 'French',
-      'es': 'Spanish',
-      'it': 'Italian',
-      'pt': 'Portuguese',
-      'nl': 'Dutch',
-      'pl': 'Polish',
-      'ja': 'Japanese',
-      'zh': 'Chinese',
-      'ko': 'Korean',
-    };
-    return Container(
-      height: 30,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      decoration: BoxDecoration(
-        color: C.level2,
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: DropdownButton<String>(
-        value: langs.containsKey(_language) ? _language : 'auto',
-        underline: const SizedBox.shrink(),
-        dropdownColor: C.level3,
-        style: const TextStyle(fontSize: 12, color: C.text),
-        icon: const Icon(
-          Icons.expand_more_rounded,
-          size: 16,
-          color: C.textMuted,
+    const langs = [
+      ('auto', 'Autodetect'),
+      ('ar', 'Arabic'),
+      ('bg', 'Bulgarian'),
+      ('ca', 'Catalan'),
+      ('zh', 'Chinese'),
+      ('hr', 'Croatian'),
+      ('cs', 'Czech'),
+      ('da', 'Danish'),
+      ('nl', 'Dutch'),
+      ('en', 'English'),
+      ('fi', 'Finnish'),
+      ('fr', 'French'),
+      ('de', 'German'),
+      ('el', 'Greek'),
+      ('hi', 'Hindi'),
+      ('hu', 'Hungarian'),
+      ('id', 'Indonesian'),
+      ('it', 'Italian'),
+      ('ja', 'Japanese'),
+      ('ko', 'Korean'),
+      ('no', 'Norwegian'),
+      ('pl', 'Polish'),
+      ('pt', 'Portuguese'),
+      ('ro', 'Romanian'),
+      ('ru', 'Russian'),
+      ('sr', 'Serbian'),
+      ('sk', 'Slovak'),
+      ('es', 'Spanish'),
+      ('sv', 'Swedish'),
+      ('th', 'Thai'),
+      ('tr', 'Turkish'),
+      ('uk', 'Ukrainian'),
+      ('vi', 'Vietnamese'),
+    ];
+    return PopupMenuButton<String>(
+      onSelected: (v) => _updateConfig({'language': v}),
+      offset: const Offset(0, 32),
+      color: C.level3,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      constraints: const BoxConstraints(maxHeight: 400),
+      itemBuilder: (_) => langs
+          .map(
+            (e) => PopupMenuItem(
+              value: e.$1,
+              height: 34,
+              child: Text(
+                e.$2,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: e.$1 == _language ? C.accent : C.text,
+                  fontWeight: e.$1 == _language
+                      ? FontWeight.w600
+                      : FontWeight.w400,
+                ),
+              ),
+            ),
+          )
+          .toList(),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: C.level2,
+          borderRadius: BorderRadius.circular(6),
         ),
-        isDense: true,
-        items: langs.entries
-            .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value)))
-            .toList(),
-        onChanged: _connected
-            ? (v) {
-                if (v != null) _updateConfig({'language': v});
-              }
-            : null,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              langs
+                  .firstWhere(
+                    (e) => e.$1 == _language,
+                    orElse: () => langs.first,
+                  )
+                  .$2,
+              style: const TextStyle(
+                fontSize: 12,
+                color: C.text,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(width: 4),
+            const Icon(Icons.expand_more_rounded, size: 14, color: C.textMuted),
+          ],
+        ),
       ),
     );
   }
 
   Widget _soundDropdown() {
-    final sounds = {
-      'subtle': 'Subtle',
-      'alex': 'Alex',
-      'luna': 'Luna',
-      'silent': 'Silent',
-    };
-    return Container(
-      height: 30,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      decoration: BoxDecoration(
-        color: C.level2,
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: DropdownButton<String>(
-        value: sounds.containsKey(_soundTheme) ? _soundTheme : 'subtle',
-        underline: const SizedBox.shrink(),
-        dropdownColor: C.level3,
-        style: const TextStyle(fontSize: 12, color: C.text),
-        icon: const Icon(
-          Icons.expand_more_rounded,
-          size: 16,
-          color: C.textMuted,
+    const themes = [
+      ('subtle', 'Subtle'),
+      ('alex', 'Alex'),
+      ('luna', 'Luna'),
+      ('silent', 'Silent'),
+    ];
+    return PopupMenuButton<String>(
+      onSelected: (v) {
+        _updateConfig({'sound_theme': v});
+        setState(() => _soundTheme = v);
+        if (v != 'silent') _post('/dictate/preview-sound', {'theme': v});
+      },
+      offset: const Offset(0, 32),
+      color: C.level3,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      itemBuilder: (_) => themes
+          .map(
+            (e) => PopupMenuItem(
+              value: e.$1,
+              height: 38,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      e.$2,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: e.$1 == _soundTheme ? C.accent : C.text,
+                        fontWeight: e.$1 == _soundTheme
+                            ? FontWeight.w600
+                            : FontWeight.w400,
+                      ),
+                    ),
+                  ),
+                  if (e.$1 != 'silent')
+                    GestureDetector(
+                      onTap: () =>
+                          _post('/dictate/preview-sound', {'theme': e.$1}),
+                      child: MouseRegion(
+                        cursor: SystemMouseCursors.click,
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 8),
+                          child: Icon(
+                            Icons.play_arrow_rounded,
+                            size: 16,
+                            color: e.$1 == _soundTheme ? C.accent : C.textMuted,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          )
+          .toList(),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: C.level2,
+          borderRadius: BorderRadius.circular(6),
         ),
-        isDense: true,
-        items: sounds.entries
-            .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value)))
-            .toList(),
-        onChanged: _connected
-            ? (v) {
-                if (v != null) _updateConfig({'sound_theme': v});
-              }
-            : null,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              themes
+                  .firstWhere(
+                    (e) => e.$1 == _soundTheme,
+                    orElse: () => themes.first,
+                  )
+                  .$2,
+              style: const TextStyle(
+                fontSize: 12,
+                color: C.text,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(width: 4),
+            const Icon(Icons.expand_more_rounded, size: 14, color: C.textMuted),
+          ],
+        ),
       ),
     );
   }
 
   Widget _translateToggle() {
+    final on = widget.settings.dictateTranslate;
     return GestureDetector(
       onTap: _connected
           ? () {
-              final next = !widget.settings.dictateTranslate;
-              widget.settings.dictateTranslate = next;
-              _updateConfig({'dictate_translate': next});
+              final v = !on;
+              widget.settings.dictateTranslate = v;
+              widget.settings.save();
+              _post('/dictate/config', {'dictate_translate': v});
+              setState(() {});
             }
           : null,
       child: MouseRegion(
@@ -654,30 +972,29 @@ class _DictateScreenState extends State<DictateScreen> {
             ? SystemMouseCursors.click
             : SystemMouseCursors.basic,
         child: Container(
-          width: 38,
-          height: 20,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           decoration: BoxDecoration(
-            color: widget.settings.dictateTranslate
-                ? C.accent.withAlpha(60)
-                : C.level2,
-            borderRadius: BorderRadius.circular(10),
+            color: C.level2,
+            borderRadius: BorderRadius.circular(6),
           ),
-          child: AnimatedAlign(
-            duration: const Duration(milliseconds: 150),
-            alignment: widget.settings.dictateTranslate
-                ? Alignment.centerRight
-                : Alignment.centerLeft,
-            child: Container(
-              width: 16,
-              height: 16,
-              margin: const EdgeInsets.symmetric(horizontal: 2),
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: widget.settings.dictateTranslate
-                    ? C.accent
-                    : C.textMuted,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                on ? 'English' : 'Off',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: on ? C.accent : C.text,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
-            ),
+              const SizedBox(width: 4),
+              Icon(
+                Icons.translate_rounded,
+                size: 14,
+                color: on ? C.accent : C.textMuted,
+              ),
+            ],
           ),
         ),
       ),
@@ -685,12 +1002,15 @@ class _DictateScreenState extends State<DictateScreen> {
   }
 
   Widget _grammarToggle() {
+    final on = widget.settings.dictateGrammar;
     return GestureDetector(
       onTap: _connected
           ? () {
-              final next = !widget.settings.dictateGrammar;
-              widget.settings.dictateGrammar = next;
-              _updateConfig({'dictate_grammar': next});
+              final v = !on;
+              widget.settings.dictateGrammar = v;
+              widget.settings.save();
+              _post('/dictate/config', {'dictate_grammar': v});
+              setState(() {});
             }
           : null,
       child: MouseRegion(
@@ -698,28 +1018,29 @@ class _DictateScreenState extends State<DictateScreen> {
             ? SystemMouseCursors.click
             : SystemMouseCursors.basic,
         child: Container(
-          width: 38,
-          height: 20,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           decoration: BoxDecoration(
-            color: widget.settings.dictateGrammar
-                ? C.accent.withAlpha(60)
-                : C.level2,
-            borderRadius: BorderRadius.circular(10),
+            color: C.level2,
+            borderRadius: BorderRadius.circular(6),
           ),
-          child: AnimatedAlign(
-            duration: const Duration(milliseconds: 150),
-            alignment: widget.settings.dictateGrammar
-                ? Alignment.centerRight
-                : Alignment.centerLeft,
-            child: Container(
-              width: 16,
-              height: 16,
-              margin: const EdgeInsets.symmetric(horizontal: 2),
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: widget.settings.dictateGrammar ? C.accent : C.textMuted,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                on ? 'On' : 'Off',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: on ? C.accent : C.text,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
-            ),
+              const SizedBox(width: 4),
+              Icon(
+                Icons.spellcheck_rounded,
+                size: 14,
+                color: on ? C.accent : C.textMuted,
+              ),
+            ],
           ),
         ),
       ),
@@ -727,7 +1048,7 @@ class _DictateScreenState extends State<DictateScreen> {
   }
 }
 
-// ── Debug Console ──
+// ── Debug Console Panel ──
 
 class _DebugPanel extends StatefulWidget {
   const _DebugPanel();
@@ -737,206 +1058,406 @@ class _DebugPanel extends StatefulWidget {
 
 class _DebugPanelState extends State<_DebugPanel> {
   bool _expanded = false;
-  String _filter = '';
+  bool _autoScroll = true;
+  bool _copied = false;
+  String _filter = 'ALL';
+  String _search = '';
   int _lastVersion = -1;
-  final ScrollController _scroll = ScrollController();
+  final _scrollCtrl = ScrollController();
+  final _searchCtrl = TextEditingController();
+  late final _ticker = Stream.periodic(const Duration(milliseconds: 500));
+  late final _tickSub = _ticker.listen((_) {
+    if (_expanded && mounted && LogBuffer.version != _lastVersion) {
+      setState(() {});
+    }
+  });
+
+  static const _sourceFilters = ['ALL', 'ERROR', 'WARN', 'SIDECAR'];
 
   @override
   void dispose() {
-    _scroll.dispose();
+    _tickSub.cancel();
+    _scrollCtrl.dispose();
+    _searchCtrl.dispose();
     super.dispose();
   }
 
   List<LogEntry> get _filtered {
-    final all = LogBuffer.entries;
-    if (_filter.isEmpty) return all;
-    final q = _filter.toLowerCase();
-    return all
-        .where(
-          (e) =>
-              e.message.toLowerCase().contains(q) ||
-              e.level.toLowerCase().contains(q) ||
-              e.source.toLowerCase().contains(q),
-        )
-        .toList();
+    var logs = LogBuffer.entries;
+    if (_filter == 'ERROR') {
+      logs = logs.where((e) => e.level == 'ERROR').toList();
+    } else if (_filter == 'WARN') {
+      logs = logs
+          .where((e) => e.level == 'WARN' || e.level == 'ERROR')
+          .toList();
+    } else if (_filter != 'ALL') {
+      logs = logs.where((e) => e.source == _filter).toList();
+    }
+    if (_search.isNotEmpty) {
+      final q = _search.toLowerCase();
+      logs = logs.where((e) => e.message.toLowerCase().contains(q)).toList();
+    }
+    return logs;
   }
 
-  void _scrollToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scroll.hasClients) _scroll.jumpTo(_scroll.position.maxScrollExtent);
+  void _copy() {
+    Clipboard.setData(
+      ClipboardData(
+        text: _filtered.map((e) => '[${e.ts}] ${e.message}').join('\n'),
+      ),
+    );
+    setState(() => _copied = true);
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _copied = false);
     });
+  }
+
+  void _export() async {
+    final logs = LogBuffer.entries
+        .map((e) => '[${e.ts}] [${e.level}] ${e.message}')
+        .join('\n');
+    final ts = DateTime.now()
+        .toIso8601String()
+        .replaceAll(':', '-')
+        .substring(0, 19);
+    final home = Platform.environment['HOME'] ?? '/tmp';
+    final path = '$home/.config/talkye/logs/debug_$ts.log';
+    try {
+      final f = File(path);
+      f.parent.createSync(recursive: true);
+      f.writeAsStringSync(logs);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Saved to $path',
+              style: const TextStyle(fontSize: 12),
+            ),
+            backgroundColor: C.level3,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Export failed: $e',
+              style: const TextStyle(fontSize: 12),
+            ),
+            backgroundColor: C.error,
+          ),
+        );
+      }
+    }
+  }
+
+  Color _levelColor(String level) {
+    switch (level) {
+      case 'ERROR':
+        return C.error;
+      case 'WARN':
+        return C.warning;
+      default:
+        return C.textSub;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        GestureDetector(
-          onTap: () => setState(() {
-            _expanded = !_expanded;
-          }),
-          child: MouseRegion(
-            cursor: SystemMouseCursors.click,
-            child: Row(
-              children: [
-                const Text(
-                  'DEBUG CONSOLE',
-                  style: TextStyle(
-                    fontSize: 10,
-                    color: C.textMuted,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 1,
-                  ),
+    if (_expanded && LogBuffer.version != _lastVersion) {
+      _lastVersion = LogBuffer.version;
+      if (_autoScroll) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (_scrollCtrl.hasClients) {
+            _scrollCtrl.jumpTo(_scrollCtrl.position.maxScrollExtent);
+          }
+        });
+      }
+    }
+    final logs = _filtered;
+    final errorCount = LogBuffer.entries
+        .where((e) => e.level == 'ERROR')
+        .length;
+    final warnCount = LogBuffer.entries.where((e) => e.level == 'WARN').length;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: C.bg,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          GestureDetector(
+            onTap: () => setState(() => _expanded = !_expanded),
+            child: MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 10,
                 ),
-                const Spacer(),
-                Icon(
-                  _expanded
-                      ? Icons.expand_less_rounded
-                      : Icons.expand_more_rounded,
-                  size: 16,
-                  color: C.textMuted,
-                ),
-              ],
-            ),
-          ),
-        ),
-        if (_expanded) ...[
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: Container(
-                  height: 30,
-                  decoration: BoxDecoration(
-                    color: C.bg,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: TextField(
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: C.text,
-                      fontFamily: 'monospace',
+                child: Row(
+                  children: [
+                    Icon(
+                      _expanded
+                          ? Icons.terminal_rounded
+                          : Icons.bug_report_rounded,
+                      size: 14,
+                      color: C.textSub,
                     ),
-                    decoration: const InputDecoration(
-                      hintText: 'Filter logs...',
-                      hintStyle: TextStyle(fontSize: 11, color: C.textMuted),
-                      border: InputBorder.none,
-                      contentPadding: EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 7,
+                    const SizedBox(width: 10),
+                    const Text(
+                      'Debug Console',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: C.text,
+                        fontWeight: FontWeight.w500,
                       ),
-                      isDense: true,
-                      prefixIcon: Icon(
-                        Icons.search_rounded,
-                        size: 14,
-                        color: C.textMuted,
-                      ),
-                      prefixIconConstraints: BoxConstraints(minWidth: 30),
                     ),
-                    onChanged: (v) => setState(() => _filter = v),
-                  ),
+                    const SizedBox(width: 8),
+                    if (errorCount > 0) _badge('$errorCount', C.error),
+                    if (errorCount > 0) const SizedBox(width: 4),
+                    if (warnCount > 0) _badge('$warnCount', C.warning),
+                    const Spacer(),
+                    Text(
+                      '${LogBuffer.length} lines',
+                      style: const TextStyle(fontSize: 10, color: C.textMuted),
+                    ),
+                    const SizedBox(width: 8),
+                    Icon(
+                      _expanded
+                          ? Icons.expand_less_rounded
+                          : Icons.expand_more_rounded,
+                      size: 16,
+                      color: C.textMuted,
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(width: 6),
-              _iconBtn(Icons.copy_rounded, 'Copy', () {
-                Clipboard.setData(ClipboardData(text: LogBuffer.text));
-              }),
-              const SizedBox(width: 4),
-              _iconBtn(Icons.delete_outline_rounded, 'Clear', () {
-                LogBuffer.clear();
-                setState(() {});
-              }),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Container(
-            height: 200,
-            decoration: BoxDecoration(
-              color: C.bg,
-              borderRadius: BorderRadius.circular(8),
             ),
-            child: _logList(),
           ),
-        ],
-      ],
-    );
-  }
-
-  Widget _logList() {
-    final logs = _filtered;
-    if (_lastVersion != LogBuffer.version) {
-      _lastVersion = LogBuffer.version;
-      _scrollToBottom();
-    }
-    if (logs.isEmpty) {
-      return const Center(
-        child: Text(
-          'No logs yet',
-          style: TextStyle(fontSize: 11, color: C.textMuted),
-        ),
-      );
-    }
-    return ListView.builder(
-      controller: _scroll,
-      padding: const EdgeInsets.all(8),
-      itemCount: logs.length,
-      itemBuilder: (_, i) {
-        final e = logs[i];
-        final color = switch (e.level) {
-          'ERROR' => C.error,
-          'WARN' => C.warning,
-          _ => C.textSub,
-        };
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 2),
-          child: Text.rich(
-            TextSpan(
-              children: [
-                TextSpan(
-                  text: '${e.ts} ',
-                  style: TextStyle(
-                    color: C.textMuted.withAlpha(150),
-                    fontSize: 10,
-                  ),
-                ),
-                if (e.source.isNotEmpty)
-                  TextSpan(
-                    text: '[${e.source}] ',
-                    style: TextStyle(
-                      color: C.accent.withAlpha(180),
-                      fontSize: 10,
+          if (_expanded) ...[
+            Container(height: 1, color: C.level2),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: _sourceFilters.map((f) {
+                          final active = _filter == f;
+                          return Padding(
+                            padding: const EdgeInsets.only(right: 4),
+                            child: GestureDetector(
+                              onTap: () => setState(() => _filter = f),
+                              child: MouseRegion(
+                                cursor: SystemMouseCursors.click,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 7,
+                                    vertical: 3,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: active
+                                        ? C.accent.withAlpha(20)
+                                        : Colors.transparent,
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(
+                                      color: active
+                                          ? C.accent.withAlpha(60)
+                                          : C.level3,
+                                    ),
+                                  ),
+                                  child: Text(
+                                    f,
+                                    style: TextStyle(
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.w500,
+                                      color: f == 'ERROR'
+                                          ? C.error
+                                          : f == 'WARN'
+                                          ? C.warning
+                                          : active
+                                          ? C.accent
+                                          : C.textMuted,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
                     ),
                   ),
-                TextSpan(
-                  text: e.message,
-                  style: TextStyle(color: color, fontSize: 10),
-                ),
-              ],
+                  _iconBtn(
+                    Icons.content_copy_rounded,
+                    _copied ? C.success : C.textMuted,
+                    _copy,
+                  ),
+                  _iconBtn(Icons.save_alt_rounded, C.textMuted, _export),
+                  _iconBtn(Icons.delete_outline_rounded, C.textMuted, () {
+                    LogBuffer.clear();
+                    setState(() {});
+                  }),
+                  _iconBtn(
+                    _autoScroll
+                        ? Icons.vertical_align_bottom_rounded
+                        : Icons.pause_rounded,
+                    _autoScroll ? C.accent : C.textMuted,
+                    () => setState(() => _autoScroll = !_autoScroll),
+                  ),
+                ],
+              ),
             ),
-            style: const TextStyle(fontFamily: 'monospace', height: 1.5),
-          ),
-        );
-      },
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Container(
+                height: 28,
+                decoration: BoxDecoration(
+                  color: C.level1,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: TextField(
+                  controller: _searchCtrl,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: C.text,
+                    fontFamily: 'monospace',
+                  ),
+                  decoration: const InputDecoration(
+                    hintText: 'Search logs...',
+                    hintStyle: TextStyle(fontSize: 11, color: C.textMuted),
+                    border: InputBorder.none,
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 6,
+                    ),
+                    prefixIcon: Icon(
+                      Icons.search_rounded,
+                      size: 14,
+                      color: C.textMuted,
+                    ),
+                    prefixIconConstraints: BoxConstraints(minWidth: 30),
+                    isDense: true,
+                  ),
+                  onChanged: (v) => setState(() => _search = v),
+                ),
+              ),
+            ),
+            const SizedBox(height: 6),
+            SizedBox(
+              height: 280,
+              child: logs.isEmpty
+                  ? const Center(
+                      child: Text(
+                        'No matching logs',
+                        style: TextStyle(fontSize: 11, color: C.textMuted),
+                      ),
+                    )
+                  : ListView.builder(
+                      controller: _scrollCtrl,
+                      itemCount: logs.length,
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      itemBuilder: (_, i) {
+                        final e = logs[i];
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 1),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              SizedBox(
+                                width: 72,
+                                child: Text(
+                                  e.ts,
+                                  style: const TextStyle(
+                                    fontSize: 10,
+                                    color: C.textMuted,
+                                    fontFamily: 'monospace',
+                                  ),
+                                ),
+                              ),
+                              if (e.level != 'INFO')
+                                Container(
+                                  margin: const EdgeInsets.only(
+                                    right: 4,
+                                    top: 1,
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 3,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: _levelColor(e.level).withAlpha(20),
+                                    borderRadius: BorderRadius.circular(2),
+                                  ),
+                                  child: Text(
+                                    e.level,
+                                    style: TextStyle(
+                                      fontSize: 8,
+                                      fontWeight: FontWeight.w600,
+                                      color: _levelColor(e.level),
+                                    ),
+                                  ),
+                                ),
+                              Expanded(
+                                child: Text(
+                                  e.message,
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontFamily: 'monospace',
+                                    height: 1.4,
+                                    color: e.level == 'ERROR'
+                                        ? C.error
+                                        : e.level == 'WARN'
+                                        ? C.warning
+                                        : C.textSub,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+            ),
+            const SizedBox(height: 6),
+          ],
+        ],
+      ),
     );
   }
 
-  Widget _iconBtn(IconData icon, String tooltip, VoidCallback onTap) {
-    return Tooltip(
-      message: tooltip,
-      child: GestureDetector(
-        onTap: onTap,
-        child: MouseRegion(
-          cursor: SystemMouseCursors.click,
-          child: Container(
-            width: 30,
-            height: 30,
-            decoration: BoxDecoration(
-              color: C.bg,
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Icon(icon, size: 14, color: C.textMuted),
-          ),
+  Widget _badge(String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+      decoration: BoxDecoration(
+        color: color.withAlpha(20),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 9,
+          color: color,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
+  Widget _iconBtn(IconData icon, Color color, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: Padding(
+          padding: const EdgeInsets.all(4),
+          child: Icon(icon, size: 14, color: color),
         ),
       ),
     );
