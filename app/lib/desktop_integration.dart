@@ -45,6 +45,15 @@ StartupWMClass=com.talkye.meet
 
   // Update desktop database (non-blocking, best-effort)
   try {
-    Process.run('update-desktop-database', [desktopDir]);
+    await Process.run('update-desktop-database', [desktopDir]);
+  } catch (_) {}
+
+  // Update icon cache so icon shows immediately
+  try {
+    await Process.run('gtk-update-icon-cache', [
+      '-f',
+      '-t',
+      '$home/.local/share/icons/hicolor',
+    ]);
   } catch (_) {}
 }

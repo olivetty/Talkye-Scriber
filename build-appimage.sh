@@ -41,6 +41,12 @@ BUNDLE="$SCRIPT_DIR/app/build/linux/x64/release/bundle"
 cp "$BUNDLE/talkye_app" "$APPDIR/usr/bin/"
 cp -r "$BUNDLE/lib" "$APPDIR/usr/bin/"
 cp -r "$BUNDLE/data" "$APPDIR/usr/bin/"
+# Copy icon next to binary so GTK window icon resolves
+if [ -f "$SCRIPT_DIR/app-icon.png" ]; then
+  cp "$SCRIPT_DIR/app-icon.png" "$APPDIR/usr/bin/talkye-meet.png"
+elif [ -f "$SCRIPT_DIR/app/assets/talkye-meet.png" ]; then
+  cp "$SCRIPT_DIR/app/assets/talkye-meet.png" "$APPDIR/usr/bin/talkye-meet.png"
+fi
 echo "  ✓ Flutter bundle copied"
 
 # ── Step 4: Copy sidecar + whisper + sox ──

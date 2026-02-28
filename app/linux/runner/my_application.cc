@@ -49,17 +49,36 @@ static void my_application_activate(GApplication* application) {
   // Set window icon — resolve relative to the executable location
   {
     g_autoptr(GError) icon_error = nullptr;
+    GdkPixbuf* icon = nullptr;
     // Get path to executable, icon is installed next to it
     g_autofree gchar* exe_path = g_file_read_link("/proc/self/exe", nullptr);
     if (exe_path != nullptr) {
       g_autofree gchar* exe_dir = g_path_get_dirname(exe_path);
+      // Try next to binary (release bundle)
       g_autofree gchar* icon_path = g_build_filename(exe_dir, "talkye-meet.png", nullptr);
-      GdkPixbuf* icon = gdk_pixbuf_new_from_file(icon_path, &icon_error);
+      icon = gdk_pixbuf_new_from_file(icon_path, &icon_error);
       if (icon == nullptr) {
         // flutter run: binary is in intermediates_do_not_run/, icon is in bundle/
         g_clear_error(&icon_error);
         g_autofree gchar* parent = g_path_get_dirname(exe_dir);
         icon_path = g_build_filename(parent, "bundle", "talkye-meet.png", nullptr);
+        icon = gdk_pixbuf_new_from_file(icon_path, &icon_error);
+      }
+      if (icon == nullptr) {
+        // AppImage: binary is in usr/bin/, icon is at AppDir root
+        g_clear_error(&icon_error);
+        // exe_dir = .../usr/bin, go up twice to AppDir root
+        g_autofree gchar* usr_dir = g_path_get_dirname(exe_dir);
+        g_autofree gchar* appdir = g_path_get_dirname(usr_dir);
+        icon_path = g_build_filename(appdir, "talkye-scriber.png", nullptr);
+        icon = gdk_pixbuf_new_from_file(icon_path, &icon_error);
+      }
+      if (icon == nullptr) {
+        // Installed icon in hicolor theme
+        g_clear_error(&icon_error);
+        const gchar* home = g_get_home_dir();
+        icon_path = g_build_filename(home, ".local", "share", "icons",
+            "hicolor", "256x256", "apps", "talkye-scriber.png", nullptr);
         icon = gdk_pixbuf_new_from_file(icon_path, &icon_error);
       }
       if (icon != nullptr) {

@@ -694,7 +694,9 @@ class _DictateScreenState extends State<DictateScreen> {
     const themes = [
       ('subtle', 'Subtle'),
       ('alex', 'Alex'),
+      ('emma', 'Emma'),
       ('luna', 'Luna'),
+      ('sofia', 'Sofia'),
       ('silent', 'Silent'),
     ];
     return PopupMenuButton<String>(
