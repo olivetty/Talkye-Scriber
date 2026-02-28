@@ -124,7 +124,8 @@ Future<void> performUpdate(
   onProgress(1.0, 'Restarting...');
   await Future.delayed(const Duration(milliseconds: 500));
 
-  // Restart
-  Process.start(appImagePath, [], mode: ProcessStartMode.detached);
+  // Restart — await the spawn, then give OS time before exiting
+  await Process.start(appImagePath, [], mode: ProcessStartMode.detached);
+  await Future.delayed(const Duration(seconds: 2));
   exit(0);
 }
