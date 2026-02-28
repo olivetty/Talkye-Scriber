@@ -257,6 +257,8 @@ class _AppShellState extends State<AppShell> with WindowListener {
   late final AppSettings _settings;
   bool _setupDone = false;
   bool _sidecarReady = false;
+  String _loadingMsg = 'Warming up...';
+  int _loadingStep = 0;
 
   // System tray
   final SystemTray _tray = SystemTray();
@@ -293,8 +295,22 @@ class _AppShellState extends State<AppShell> with WindowListener {
   }
 
   Future<void> _waitForSidecar() async {
+    const messages = [
+      'Warming up...',
+      'Loading voice engine...',
+      'Preparing microphone...',
+      'Calibrating speech model...',
+      'Setting up dictation...',
+      'Almost there...',
+      'Finishing setup...',
+    ];
     for (var i = 0; i < 60; i++) {
       await Future.delayed(const Duration(milliseconds: 500));
+      // Update loading message every 2 seconds
+      if (i % 4 == 0 && mounted) {
+        _loadingStep = (i ~/ 4) % messages.length;
+        setState(() => _loadingMsg = messages[_loadingStep]);
+      }
       try {
         final client = HttpClient()
           ..connectionTimeout = const Duration(seconds: 1);
@@ -309,8 +325,20 @@ class _AppShellState extends State<AppShell> with WindowListener {
           return;
         }
       } catch (_) {}
+      // Check if sidecar process died
+      if (_sidecar != null) {
+        final exitCode = _sidecar!.exitCode;
+        // exitCode is a Future — check if it's already completed
+        bool died = false;
+        exitCode.then((_) => died = true);
+        await Future.delayed(Duration.zero);
+        if (died) {
+          LogBuffer.add('SIDECAR: process died during startup');
+          break;
+        }
+      }
     }
-    // Timeout — show dictate screen anyway (will show offline banner)
+    // Timeout or crash — show dictate screen anyway (will show offline banner)
     if (mounted) setState(() => _sidecarReady = true);
   }
 
@@ -411,15 +439,34 @@ class _AppShellState extends State<AppShell> with WindowListener {
         workingDirectory: sidecarDir,
         environment: sidecarEnv,
       );
+      // Write sidecar output to log file for debugging
+      final logFile = File('$home/.config/talkye/sidecar.log');
+      final logSink = logFile.openWrite(mode: FileMode.write);
+      logSink.writeln(
+        '[${DateTime.now()}] Sidecar starting (PID ${_sidecar!.pid})',
+      );
+      logSink.writeln('[${DateTime.now()}] venv: $venvDir');
+      logSink.writeln('[${DateTime.now()}] sidecarDir: $sidecarDir');
       _sidecar!.stdout.transform(utf8.decoder).listen((line) {
         for (final l in line.split('\n')) {
-          if (l.trim().isNotEmpty) LogBuffer.add('SIDECAR: $l');
+          if (l.trim().isNotEmpty) {
+            LogBuffer.add('SIDECAR: $l');
+            logSink.writeln(l);
+          }
         }
       });
       _sidecar!.stderr.transform(utf8.decoder).listen((line) {
         for (final l in line.split('\n')) {
-          if (l.trim().isNotEmpty) LogBuffer.add('SIDECAR ERR: $l');
+          if (l.trim().isNotEmpty) {
+            LogBuffer.add('SIDECAR ERR: $l');
+            logSink.writeln('[ERR] $l');
+          }
         }
+      });
+      _sidecar!.exitCode.then((code) {
+        logSink.writeln('[${DateTime.now()}] Sidecar exited with code $code');
+        logSink.close();
+        LogBuffer.add('SIDECAR: exited with code $code');
       });
       LogBuffer.add('SIDECAR: started (PID ${_sidecar!.pid})');
     } catch (e) {
@@ -535,9 +582,9 @@ class _AppShellState extends State<AppShell> with WindowListener {
             ),
           ),
           const SizedBox(height: 8),
-          const Text(
-            'Starting...',
-            style: TextStyle(fontSize: 13, color: C.textSub),
+          Text(
+            _loadingMsg,
+            style: const TextStyle(fontSize: 13, color: C.textSub),
           ),
         ],
       ),
