@@ -27,7 +27,6 @@ def generate_sounds():
             "stop":     "synth 0.12 sine 440 vol 0.8",
             "done":     "synth 0.08 sine 660 vol 0.6",
             "error":    "synth 0.25 sine 260 vol 0.6",
-            "activate": "synth 0.15 sine 660 synth 0.15 sine 990 vol 0.8",
         },
     }
     for theme_name, sounds in themes.items():
@@ -51,7 +50,7 @@ def play_sound(name: str):
     path = None
     if config.SOUND_THEME in _VOICE_THEMES:
         voice_map = {
-            "start": "start", "activate": "start",
+            "start": "start",
             "stop": "stop", "done": "stop", "command": "stop", "error": "stop",
         }
         mapped = voice_map.get(name, name)

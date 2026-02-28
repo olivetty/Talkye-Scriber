@@ -1,16 +1,14 @@
-"""Talkye Sidecar — Desktop dictation entry point.
+"""Talkye Scriber Sidecar — Desktop dictation entry point.
 
 Hold a trigger key to record, release to transcribe and paste at cursor.
-Say a wake word to activate hands-free dictation via VAD.
 
 Modules:
     config.py        — Shared configuration and mutable state
     platform_utils.py — OS helpers (paste, notify, xdotool)
     audio.py         — Sound generation, playback, recording
     commands.py      — Voice command detection and execution
-    transcribe.py    — Groq STT, transcription pipeline
+    transcribe.py    — STT pipeline (local whisper.cpp + Groq fallback)
     keyboard.py      — evdev + pynput PTT listeners
-    vad.py           — VAD listener with Rustpotter wake word
 
 Usage:
     python desktop.py
@@ -33,25 +31,22 @@ def main():
     config.load_flutter_settings()
 
     logger.info("Dictate desktop client starting (%s)", config.PLATFORM)
-    logger.info("Input: %s | Mode: %s | Language: %s | Wake phrase: '%s' | Threshold: %.2f | STT: %s | Translate: %s",
-                config.INPUT_MODE, config.core.mode, config.LANGUAGE, config.WAKE_PHRASE,
-                config.WAKEWORD_THRESHOLD, config.STT_BACKEND, config.DICTATE_TRANSLATE)
+    logger.info("Trigger: %s | STT: %s | Translate: %s | Grammar: %s",
+                config.TRIGGER_KEY, config.STT_BACKEND,
+                config.DICTATE_TRANSLATE, config.DICTATE_GRAMMAR)
 
-    if config.LLM_CLEANUP or config.TRANSLATE_ENABLED:
+    if config.LLM_CLEANUP or config.DICTATE_GRAMMAR or config.DICTATE_TRANSLATE:
         features = []
-        if config.LLM_CLEANUP:
-            features.append("cleanup")
-        if config.TRANSLATE_ENABLED:
-            features.append(f"translate→{config.TRANSLATE_TO}")
-        logger.info("LLM streaming: %s (provider=%s, model=%s)",
+        if config.LLM_CLEANUP or config.DICTATE_GRAMMAR:
+            features.append("grammar")
+        if config.DICTATE_TRANSLATE:
+            features.append("translate→en")
+        logger.info("LLM post-processing: %s (provider=%s, model=%s)",
                      "+".join(features), config.core.llm_provider, config.core.llm_model)
 
     generate_sounds()
 
-    if config.INPUT_MODE == "vad":
-        from vad import run_vad_listener
-        run_vad_listener()
-    elif config.IS_LINUX:
+    if config.IS_LINUX:
         try:
             import evdev  # noqa: F401
             devices = evdev.list_devices()

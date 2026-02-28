@@ -1,7 +1,6 @@
-"""Talkye Sidecar — Transcription pipeline.
+"""Talkye Scriber Sidecar — Transcription pipeline.
 
-Groq STT, local whisper.cpp, hallucination filtering, wake-phrase stripping,
-dictation output.
+Local whisper.cpp STT, Groq fallback, hallucination filtering, dictation output.
 """
 
 import logging
@@ -32,14 +31,11 @@ def groq_transcribe(audio_path: str, language: str = None) -> dict:
                 return config.core.transcribe(audio_path, None)
             _groq_client = openai.OpenAI(api_key=key, base_url="https://api.groq.com/openai/v1")
 
-        prompt_hint = f'{config.WAKE_PHRASE.title()}. '
-
         with open(audio_path, "rb") as audio_file:
             kwargs = {
                 "model": "whisper-large-v3",
                 "file": audio_file,
                 "response_format": "verbose_json",
-                "prompt": prompt_hint,
             }
             if language:
                 kwargs["language"] = language
@@ -121,11 +117,7 @@ _HALLUCINATIONS = {
 
 
 def _select_and_replace(old_text: str, new_text: str):
-    """Select the previously pasted text and replace it with corrected text.
-
-    Selects backwards by character count, then pastes the replacement
-    which overwrites the selection.
-    """
+    """Select the previously pasted text and replace it with corrected text."""
     import subprocess
     n = len(old_text)
     if n <= 0:
@@ -133,85 +125,26 @@ def _select_and_replace(old_text: str, new_text: str):
     env = user_env()
     prefix = xdotool_prefix()
     release_modifiers()
-    # Select N characters backwards using --repeat (fast, single xdotool call)
     subprocess.run(
         prefix + ["xdotool", "key", "--clearmodifiers", "--repeat", str(n), "--delay", "0", "shift+Left"],
         timeout=10, env=env, capture_output=True,
     )
     time.sleep(0.05)
-    # Paste the corrected text (replaces selection)
     paste_text(new_text)
 
 
-def _strip_wake_phrase(text: str) -> str | None:
-    """Strip wake phrase from start of transcribed text.
-
-    Uses word-based matching with phonetic normalization to handle
-    Whisper transcription variants (e.g. "hei" for "hey").
-    Returns cleaned text (preserving original case), or None if only
-    the wake phrase was said.
-    """
-    if not config.wake_phrase_words:
-        return text
-
-    import re
-    word_spans = [(m.group().lower(), m.start(), m.end())
-                  for m in re.finditer(r"[a-zA-ZÀ-ÿ']+", text)]
-
-    if len(word_spans) < len(config.wake_phrase_words):
-        return text
-
-    def normalize(w: str) -> str:
-        return config._PHONETIC_MAP.get(w, w)
-
-    n = len(config.wake_phrase_words)
-    match = True
-    for i in range(n):
-        if normalize(word_spans[i][0]) != normalize(config.wake_phrase_words[i]):
-            match = False
-            break
-
-    if not match:
-        return text
-
-    if len(word_spans) <= n:
-        return None
-
-    rest_start = word_spans[n - 1][2]
-    while rest_start < len(text) and text[rest_start] in ' ,.!?;:-\n\t':
-        rest_start += 1
-
-    if rest_start >= len(text):
-        return None
-
-    return text[rest_start:]
-
-
 def transcribe_and_paste(prefetched_result=None):
-    """Transcribe audio, auto-detect commands vs dictation.
-
-    Args:
-        prefetched_result: If provided, skip transcription and use this result directly
-                          (from speculative transcription).
-    """
-    import subprocess
-    _cmd_executed = False
-
+    """Transcribe audio and paste at cursor. Detects voice commands for short utterances."""
     try:
         if not os.path.isfile(config.AUDIOFILE) or os.path.getsize(config.AUDIOFILE) < 5000:
             notify("Too short, ignored")
             return
 
         lang = config.LANGUAGE if config.LANGUAGE != "auto" else None
-        is_vad = config.INPUT_MODE == "vad"
 
         if prefetched_result:
             result = prefetched_result
             logger.info("Using prefetched speculative result")
-        elif is_vad:
-            is_active = time.monotonic() < config.vad_active_until
-            vad_lang = (config.LANGUAGE if config.LANGUAGE != "auto" else None) if is_active else None
-            result = _transcribe(config.AUDIOFILE, vad_lang)
         else:
             result = _transcribe(config.AUDIOFILE, lang)
 
@@ -229,19 +162,11 @@ def transcribe_and_paste(prefetched_result=None):
         logger.info("Transcribed [%s]: %s", detected_lang, text)
         word_count = len(text.split())
 
-        # In VAD mode, strip wake phrase from transcription
-        if is_vad:
-            stripped = _strip_wake_phrase(text)
-            if stripped is None:
-                return
-            text = stripped
-            word_count = len(text.split())
-
         # Short utterance? Check if it's a voice command
         if word_count <= config.MAX_COMMAND_WORDS:
             cmd_ids = detect_command(text)
             if cmd_ids:
-                _cmd_executed = execute_commands(cmd_ids)
+                execute_commands(cmd_ids)
                 return
 
         # Normal dictation — leading space for segment separation
@@ -249,8 +174,6 @@ def transcribe_and_paste(prefetched_result=None):
 
         use_cleanup = config.LLM_CLEANUP or config.DICTATE_GRAMMAR
         use_translate = "en" if config.DICTATE_TRANSLATE else None
-        if not use_translate:
-            use_translate = config.TRANSLATE_TO if config.TRANSLATE_ENABLED else None
 
         if use_cleanup or use_translate:
             # Show raw STT text immediately so user doesn't wait
@@ -258,9 +181,7 @@ def transcribe_and_paste(prefetched_result=None):
             # Process through LLM (Groq — fast)
             corrected = config.core.llm_process(text.strip(), detected_lang, use_cleanup, use_translate)
             if corrected and corrected.strip() != text.strip():
-                # Add leading space back (segment separation)
                 corrected = " " + corrected.strip()
-                # Select the raw text we just pasted and replace with corrected
                 _select_and_replace(text, corrected)
             logger.info("Final output: %s", corrected)
         else:
@@ -278,12 +199,4 @@ def transcribe_and_paste(prefetched_result=None):
                 os.unlink(f)
             except OSError:
                 pass
-        if config.INPUT_MODE == "vad":
-            if _cmd_executed:
-                config.vad_active_until = 0.0
-                config.vad_silent_end = True
-                config.vad_cooldown_until = time.monotonic() + 2.0
-            elif time.monotonic() < config.vad_active_until:
-                # Only refresh if session is still active — don't resurrect expired sessions
-                config.set_vad_active()
         config.busy = False

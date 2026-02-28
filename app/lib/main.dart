@@ -40,23 +40,17 @@ class TalkyeApp extends StatelessWidget {
 /// Shared app settings — persisted to ~/.config/talkye/settings.json
 class AppSettings {
   String triggerKey; // evdev name, e.g. KEY_RIGHTCTRL
-  String soundTheme; // subtle | mechanical | silent
-  String inputMode; // ptt | vad
+  String soundTheme; // subtle | alex | luna | silent
   bool dictateTranslate; // translate to English via LLM
   bool dictateGrammar; // grammar/cleanup fix via LLM
-  String wakePhrase; // wake phrase for VAD (user-trained)
-  int vadTimeout; // seconds of silence → standby
-  bool autoEnter; // press Enter when VAD session ends
+  String groqApiKey; // Groq API key for LLM post-processing
 
   AppSettings({
     this.triggerKey = 'KEY_RIGHTCTRL',
     this.soundTheme = 'subtle',
-    this.inputMode = 'ptt',
     this.dictateTranslate = false,
     this.dictateGrammar = false,
-    this.wakePhrase = 'hey mira',
-    this.vadTimeout = 8,
-    this.autoEnter = true,
+    this.groqApiKey = '',
   });
 
   static File get _file {
@@ -72,12 +66,9 @@ class AppSettings {
         return AppSettings(
           triggerKey: map['triggerKey'] as String? ?? 'KEY_RIGHTCTRL',
           soundTheme: map['soundTheme'] as String? ?? 'subtle',
-          inputMode: map['inputMode'] as String? ?? 'ptt',
           dictateTranslate: map['dictateTranslate'] as bool? ?? false,
           dictateGrammar: map['dictateGrammar'] as bool? ?? false,
-          wakePhrase: map['wakePhrase'] as String? ?? 'hey mira',
-          vadTimeout: map['vadTimeout'] as int? ?? 8,
-          autoEnter: map['autoEnter'] as bool? ?? true,
+          groqApiKey: map['groqApiKey'] as String? ?? '',
         );
       }
     } catch (e) {
@@ -94,12 +85,9 @@ class AppSettings {
         jsonEncode({
           'triggerKey': triggerKey,
           'soundTheme': soundTheme,
-          'inputMode': inputMode,
           'dictateTranslate': dictateTranslate,
           'dictateGrammar': dictateGrammar,
-          'wakePhrase': wakePhrase,
-          'vadTimeout': vadTimeout,
-          'autoEnter': autoEnter,
+          'groqApiKey': groqApiKey,
         }),
       );
     } catch (e) {

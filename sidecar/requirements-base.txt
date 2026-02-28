@@ -1,5 +1,4 @@
-# Talkye Python Sidecar — base dependencies
-# llama-cpp-python is installed separately by setup.sh (with CUDA detection)
+# Talkye Scriber — Python Sidecar (base dependencies)
 
 # Core
 python-dotenv>=1.0.0
@@ -14,7 +13,3 @@ websockets>=12.0
 # Desktop PTT (push-to-talk)
 evdev>=1.6.0
 pynput>=1.7.6
-
-# VAD mode
-setuptools<81
-webrtcvad>=2.0.10

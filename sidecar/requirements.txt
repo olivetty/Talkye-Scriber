@@ -1,4 +1,4 @@
-# Talkye Python Sidecar
+# Talkye Scriber — Python Sidecar
 # Install: pip install -r requirements.txt
 
 # Core
@@ -14,10 +14,3 @@ websockets>=12.0
 # Desktop PTT (push-to-talk)
 evdev>=1.6.0
 pynput>=1.7.6
-
-# VAD mode
-setuptools<81
-webrtcvad>=2.0.10
-
-# Local LLM (Qwen3-1.7B via llama.cpp)
-llama-cpp-python>=0.3.0

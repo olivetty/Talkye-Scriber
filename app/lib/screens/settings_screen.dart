@@ -1,9 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../theme.dart';
 import '../main.dart';
+
+const _baseUrl = 'http://127.0.0.1:8179';
 
 class SettingsScreen extends StatefulWidget {
   final AppSettings settings;
@@ -13,6 +16,41 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  late TextEditingController _groqCtrl;
+  bool _groqObscured = true;
+  bool _groqSaved = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _groqCtrl = TextEditingController(text: widget.settings.groqApiKey);
+  }
+
+  @override
+  void dispose() {
+    _groqCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _saveGroqKey() async {
+    final key = _groqCtrl.text.trim();
+    widget.settings.groqApiKey = key;
+    widget.settings.save();
+    // Push to sidecar at runtime
+    try {
+      final c = HttpClient()..connectionTimeout = const Duration(seconds: 1);
+      final req = await c.postUrl(Uri.parse('$_baseUrl/dictate/config'));
+      req.headers.set('Content-Type', 'application/json');
+      req.write(jsonEncode({'groq_api_key': key}));
+      await req.close().timeout(const Duration(seconds: 2));
+      c.close();
+    } catch (_) {}
+    setState(() => _groqSaved = true);
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _groqSaved = false);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListView(
@@ -28,6 +66,92 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ),
         const SizedBox(height: 24),
+        // Groq API Key
+        _section('LLM POST-PROCESSING', [
+          const Text(
+            'Groq API key is needed for Translate and Grammar Fix features.\n'
+            'Get one free at groq.com/console',
+            style: TextStyle(fontSize: 11, color: C.textSub, height: 1.4),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: Container(
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: C.bg,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: TextField(
+                    controller: _groqCtrl,
+                    obscureText: _groqObscured,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: C.text,
+                      fontFamily: 'monospace',
+                    ),
+                    decoration: InputDecoration(
+                      hintText: 'gsk_...',
+                      hintStyle: const TextStyle(
+                        fontSize: 12,
+                        color: C.textMuted,
+                      ),
+                      border: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                      isDense: true,
+                      suffixIcon: GestureDetector(
+                        onTap: () =>
+                            setState(() => _groqObscured = !_groqObscured),
+                        child: MouseRegion(
+                          cursor: SystemMouseCursors.click,
+                          child: Icon(
+                            _groqObscured
+                                ? Icons.visibility_off_rounded
+                                : Icons.visibility_rounded,
+                            size: 16,
+                            color: C.textMuted,
+                          ),
+                        ),
+                      ),
+                      suffixIconConstraints: const BoxConstraints(minWidth: 36),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: _saveGroqKey,
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: Container(
+                    height: 36,
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    decoration: BoxDecoration(
+                      color: _groqSaved
+                          ? C.success.withAlpha(20)
+                          : C.accent.withAlpha(20),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    alignment: Alignment.center,
+                    child: Text(
+                      _groqSaved ? 'Saved' : 'Save',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: _groqSaved ? C.success : C.accent,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ]),
+        const SizedBox(height: 20),
         // Audio + About side by side
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -60,6 +184,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const SizedBox(height: 10),
         const _DebugPanel(),
       ],
+    );
+  }
+
+  Widget _section(String title, List<Widget> children) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: C.level1,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 10,
+              color: C.textMuted,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 1,
+            ),
+          ),
+          const SizedBox(height: 10),
+          ...children,
+        ],
+      ),
     );
   }
 
@@ -452,7 +602,6 @@ class _DebugPanelState extends State<_DebugPanel> {
                                   ),
                                   padding: const EdgeInsets.symmetric(
                                     horizontal: 3,
-                                    vertical: 0,
                                   ),
                                   decoration: BoxDecoration(
                                     color: _levelColor(e.level).withAlpha(20),

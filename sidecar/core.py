@@ -113,7 +113,8 @@ class DictateCore:
     def _init_groq(self):
         import openai
         if not self.groq_api_key:
-            raise RuntimeError("GROQ_API_KEY is required for groq mode")
+            logger.warning("GROQ_API_KEY not set — STT via Groq will not work")
+            return
         self._whisper_client = openai.OpenAI(
             api_key=self.groq_api_key,
             base_url="https://api.groq.com/openai/v1",

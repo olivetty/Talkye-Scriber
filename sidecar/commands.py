@@ -108,13 +108,9 @@ def _detect_via_cloud(text: str) -> str | None:
         return None
 
 
-# Commands that end the VAD session (no further dictation expected)
-_TERMINAL_CMDS = {"enter", "new_line", "escape", "save", "cancel"}
-
-
 def execute_commands(cmd_ids: list[str]) -> bool:
-    """Execute a list of command IDs. Returns True if last command is terminal."""
-    terminal = False
+    """Execute a list of command IDs. Returns True if any command was executed."""
+    executed = False
     for cmd_id in cmd_ids:
         action = COMMAND_ACTIONS.get(cmd_id)
         if not action:
@@ -131,5 +127,5 @@ def execute_commands(cmd_ids: list[str]) -> bool:
         logger.info("Command executed: %s → %s", cmd_id,
                      "callable" if callable(action) else action)
         notify(f"⚡ {cmd_id}")
-        terminal = cmd_id in _TERMINAL_CMDS
-    return terminal
+        executed = True
+    return executed
