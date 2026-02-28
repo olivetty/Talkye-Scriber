@@ -521,7 +521,37 @@ class _AppShellState extends State<AppShell> with WindowListener {
       final file = File('${dir.path}/$name');
       await file.writeAsBytes(data.buffer.asUint8List());
     }
-    _trayIconIdle = '${dir.path}/tray-dark.png';
+    // Detect system theme: dark panel needs light icon, light panel needs dark icon
+    final useDark = await _isDesktopDarkTheme();
+    _trayIconIdle = useDark
+        ? '${dir.path}/tray-light.png'
+        : '${dir.path}/tray-dark.png';
+  }
+
+  static Future<bool> _isDesktopDarkTheme() async {
+    try {
+      final r = await Process.run('gsettings', [
+        'get',
+        'org.gnome.desktop.interface',
+        'color-scheme',
+      ]);
+      if (r.exitCode == 0) {
+        final val = (r.stdout as String).trim();
+        if (val.contains('dark')) return true;
+        if (val.contains('light')) return false;
+      }
+    } catch (_) {}
+    try {
+      final r = await Process.run('gsettings', [
+        'get',
+        'org.gnome.desktop.interface',
+        'gtk-theme',
+      ]);
+      if (r.exitCode == 0) {
+        return (r.stdout as String).toLowerCase().contains('dark');
+      }
+    } catch (_) {}
+    return true; // default: assume dark panel
   }
 
   Future<void> _initTray() async {

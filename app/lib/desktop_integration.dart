@@ -13,12 +13,7 @@ Future<void> installDesktopEntry() async {
   final desktopFile = '$desktopDir/talkye-scriber.desktop';
   final iconFile = '$iconDir/talkye-scriber.png';
 
-  // Skip if already installed with same AppImage path
-  final existing = File(desktopFile);
-  if (await existing.exists()) {
-    final content = await existing.readAsString();
-    if (content.contains(appImagePath)) return; // already installed
-  }
+  // Always update icon and desktop entry (icon might change between versions)
 
   // Create directories
   await Directory(desktopDir).create(recursive: true);
