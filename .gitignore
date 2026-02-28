@@ -21,6 +21,9 @@ sidecar/__pycache__/
 *.swo
 *~
 
+# Kiro (internal dev config)
+.kiro/
+
 # OS
 .DS_Store
 Thumbs.db

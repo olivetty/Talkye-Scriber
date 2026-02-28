@@ -1,43 +1,97 @@
 # Talkye Scriber
 
-Desktop dictation app — speak and it types. Push-to-talk, local STT, works everywhere.
+Voice-to-text dictation for Linux. Hold a key, speak, release — text appears at your cursor. Works in any app.
 
-## How it works
+![Talkye Scriber](https://github.com/olivetty/Talkye-Meet-Assistant/raw/scriber/app-icon.png)
 
-Hold a key → speak → release → text appears at your cursor. Works in any app.
+## Download
 
-```
-Flutter Desktop App  ←→  Python Sidecar (localhost:8179)
-     (UI, settings)         (audio capture, STT, LLM post-processing)
-```
+**[Download Talkye Scriber (Linux x86_64)](https://cdn.talkye.com/TalkyeScriber-x86_64.AppImage)**
 
-- STT: local whisper.cpp (GPU-accelerated, no cloud dependency)
-- LLM post-processing (optional): Groq API for grammar fix and translation
-- Voice commands: say "enter", "delete", "undo", "select all" in any language
-- Sound feedback: configurable themes (subtle beeps, voice cues, or silent)
-
-## Build & Run
+Or grab it from [GitHub Releases](https://github.com/olivetty/Talkye-Meet-Assistant/releases/latest).
 
 ```bash
-cd app
-flutter pub get
-flutter build linux
+chmod +x TalkyeScriber-x86_64.AppImage
+./TalkyeScriber-x86_64.AppImage
 ```
 
-The sidecar starts automatically with the app. It runs `sidecar/server.py` via uvicorn on port 8179.
+No installation needed. The AppImage bundles everything — Python runtime, whisper.cpp, audio tools. On first launch it downloads the speech model (~1.6 GB, one time only).
+
+## What it does
+
+- Push-to-talk dictation: hold Right Ctrl (configurable), speak, release — text is typed at your cursor position
+- Works in any application — browser, terminal, IDE, chat apps, anything
+- Speech-to-text runs 100% locally via whisper.cpp (large-v3-turbo model, GPU-accelerated)
+- No cloud dependency for transcription — your voice never leaves your machine
+- Voice commands: say "enter", "delete", "undo", "select all", "new line" in any language
+- Optional LLM post-processing via Groq API (free tier): grammar fix and translation to English
+- Configurable sound feedback: subtle beeps, voice cues (Alex/Emma), or silent
+- Auto-updates: the app checks for new versions and updates itself in seconds
+- System tray integration with show/hide toggle
+- Runs as a single instance — clicking the icon again brings the existing window to front
 
 ## Requirements
 
+- Linux x86_64 (tested on Ubuntu 24.04, should work on most distros)
+- X11 with `xdotool` and `xclip` (for typing text at cursor)
+- PipeWire or PulseAudio (for microphone access)
+- ~2 GB disk space (app + speech model)
+- A microphone
+
+## How it works
+
+```
+┌─────────────────────┐     localhost:8179     ┌──────────────────────────┐
+│   Flutter App (UI)  │ ◄──────────────────► │   Python Sidecar (API)   │
+│                     │                        │                          │
+│  • Settings         │                        │  • Keyboard listener     │
+│  • System tray      │                        │  • Audio capture         │
+│  • Auto-updater     │                        │  • whisper.cpp STT       │
+│  • Desktop entry    │                        │  • Voice commands (LLM)  │
+└─────────────────────┘                        │  • Text output (xdotool) │
+                                               └──────────────────────────┘
+```
+
+The Flutter app manages the UI and lifecycle. A Python sidecar handles the heavy lifting — listening for the push-to-talk key, capturing audio, running speech-to-text through whisper.cpp, and typing the result at your cursor via xdotool.
+
+## Building from source
+
+### Prerequisites
+
 - Flutter SDK 3.11+
-- Python 3.11+ with venv
-- Linux (X11 with xdotool + xclip for auto-paste)
-- whisper.cpp built locally (for local STT)
-- Groq API key (optional, only for grammar fix / translate features)
+- Python 3.11+
+- whisper.cpp (build from `whisper.cpp/` directory)
+- sox, xdotool, xclip
 
-## Project Structure
+### Build
+
+```bash
+# Build the Flutter app
+cd app
+flutter pub get
+flutter build linux --release
+
+# Set up the Python sidecar
+cd ../sidecar
+./setup.sh
+```
+
+### Build AppImage
+
+```bash
+./build-appimage.sh
+```
+
+This creates a self-contained `TalkyeScriber-x86_64.AppImage` with everything bundled.
+
+## Project structure
 
 ```
-app/          Flutter desktop app (UI, system tray, settings)
-sidecar/      Python backend (FastAPI, audio, STT, keyboard listener)
-docs/         Documentation
+app/          Flutter desktop app (UI, system tray, auto-updater)
+sidecar/      Python backend (FastAPI — audio, STT, keyboard, voice commands)
+whisper.cpp/  Local whisper.cpp build (not tracked in git)
 ```
+
+## License
+
+MIT
