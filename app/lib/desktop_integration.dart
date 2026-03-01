@@ -34,7 +34,7 @@ Exec=$appImagePath
 Icon=$iconFile
 Type=Application
 Categories=Utility;Accessibility;Audio;
-StartupWMClass=com.talkye.meet
+StartupWMClass=com.talkye.scriber
 ''';
   await File(desktopFile).writeAsString(desktop);
 

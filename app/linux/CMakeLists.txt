@@ -7,7 +7,7 @@ project(runner LANGUAGES CXX)
 set(BINARY_NAME "talkye_app")
 # The unique GTK application identifier for this application. See:
 # https://wiki.gnome.org/HowDoI/ChooseApplicationID
-set(APPLICATION_ID "com.talkye.meet")
+set(APPLICATION_ID "com.talkye.scriber")
 
 # Explicitly opt in to modern CMake behaviors to avoid warnings with recent
 # versions of CMake.
@@ -124,12 +124,12 @@ install(CODE "
   file(MAKE_DIRECTORY \${ICON_DIR})
   file(COPY \"${CMAKE_CURRENT_SOURCE_DIR}/runner/talkye-meet.png\"
        DESTINATION \${ICON_DIR})
-  file(RENAME \"\${ICON_DIR}/talkye-meet.png\" \"\${ICON_DIR}/com.talkye.meet.png\")
+  file(RENAME \"\${ICON_DIR}/talkye-meet.png\" \"\${ICON_DIR}/com.talkye.scriber.png\")
 
   # Install .desktop file to ~/.local/share/applications/
   set(DESKTOP_DIR \"$ENV{HOME}/.local/share/applications\")
   file(MAKE_DIRECTORY \${DESKTOP_DIR})
-  file(COPY \"${CMAKE_CURRENT_SOURCE_DIR}/com.talkye.meet.desktop\"
+  file(COPY \"${CMAKE_CURRENT_SOURCE_DIR}/com.talkye.scriber.desktop\"
        DESTINATION \${DESKTOP_DIR})
   " COMPONENT Runtime)
 
