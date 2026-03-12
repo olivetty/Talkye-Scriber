@@ -6,6 +6,14 @@ Voice-to-text dictation for Linux. Hold a key, speak, release — text appears a
 
 ## Download
 
+### Snap Store (Ubuntu / any distro with snapd)
+
+[![Get it from the Snap Store](https://snapcraft.io/static/images/badges/en/snap-store-black.svg)](https://snapcraft.io/talkye-scriber)
+
+```bash
+sudo snap install talkye-scriber
+```
+
 ### .deb (Ubuntu / Debian / Mint / Pop!_OS)
 
 **[Download .deb package](https://github.com/olivetty/Talkye-Scriber/releases/latest)**
