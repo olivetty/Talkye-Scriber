@@ -423,15 +423,8 @@ def _is_hallucination(text: str, audio_duration: float = 0) -> bool:
     if _is_repetitive(cleaned):
         return True
 
-    # Layer 6: Suspiciously long output from short audio
-    if audio_duration > 0:
-        word_count = len(cleaned.split())
-        # Normal speech is ~2.5 words/sec. If output is >5 words/sec, suspicious.
-        words_per_sec = word_count / max(audio_duration, 0.1)
-        if words_per_sec > 5.0 and word_count > 8:
-            logger.info("Hallucination filtered (%.1f words/sec from %.1fs audio): '%s'",
-                         words_per_sec, audio_duration, text)
-            return True
+    # Layer 6: (removed — whisper.cpp returns processing time, not audio
+    # duration, so speech-rate heuristic caused false positives on fast GPUs)
 
     # Layer 7: Only punctuation/symbols
     alpha_chars = sum(1 for c in cleaned if c.isalpha())
