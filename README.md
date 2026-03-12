@@ -6,16 +6,29 @@ Voice-to-text dictation for Linux. Hold a key, speak, release — text appears a
 
 ## Download
 
-**[Download Talkye Scriber (Linux x86_64)](https://cdn.talkye.com/TalkyeScriber-x86_64.AppImage)**
+### .deb (Ubuntu / Debian / Mint / Pop!_OS)
 
-Or grab it from [GitHub Releases](https://github.com/olivetty/Talkye-Scriber/releases/latest).
+**[Download .deb package](https://github.com/olivetty/Talkye-Scriber/releases/latest)**
+
+```bash
+sudo dpkg -i talkye-scriber_*_amd64.deb
+talkye-scriber
+```
+
+Installs to `/opt/talkye-scriber/`, adds a desktop entry, and puts `talkye-scriber` in your PATH. Updates install via the app with a single password prompt.
+
+### AppImage (any Linux distro)
+
+**[Download AppImage](https://cdn.talkye.com/TalkyeScriber-x86_64.AppImage)**
 
 ```bash
 chmod +x TalkyeScriber-x86_64.AppImage
 ./TalkyeScriber-x86_64.AppImage
 ```
 
-No installation needed. The AppImage bundles everything — Python runtime, whisper.cpp, audio tools. On first launch it downloads the speech model (~1.6 GB, one time only).
+No installation needed. Self-contained, runs on any distro.
+
+Both packages bundle everything — Python runtime, whisper.cpp, audio tools. On first launch the app downloads the speech model (~1.6 GB, one time only).
 
 ## What it does
 
@@ -82,7 +95,11 @@ cd ../sidecar
 ./build-appimage.sh
 ```
 
-This creates a self-contained `TalkyeScriber-x86_64.AppImage` with everything bundled.
+### Build .deb
+
+```bash
+./build-deb.sh
+```
 
 ## Project structure
 

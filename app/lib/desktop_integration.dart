@@ -2,8 +2,11 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 
 /// Install desktop entry + icon so the app appears in Linux app launcher.
-/// Only runs when launched as AppImage and not already installed.
+/// Only runs when launched as AppImage (deb installs handle this via postinst).
 Future<void> installDesktopEntry() async {
+  // Skip if installed via .deb — postinst already handles .desktop + icon
+  if (Platform.environment['TALKYE_INSTALL_TYPE'] == 'deb') return;
+
   final appImagePath = Platform.environment['APPIMAGE'];
   if (appImagePath == null || appImagePath.isEmpty) return; // not AppImage
 

@@ -11,14 +11,28 @@ const _repoName = 'Talkye-Scriber';
 const _cdnBase = 'https://cdn.talkye.com';
 const _appImageName = 'TalkyeScriber-x86_64.AppImage';
 
+/// Detect install type: "deb", "appimage", or "dev"
+String get installType {
+  if (Platform.environment['TALKYE_INSTALL_TYPE'] == 'deb') return 'deb';
+  if (Platform.environment['APPIMAGE'] != null) return 'appimage';
+  return 'dev';
+}
+
+String _debAssetName(String version) => 'talkye-scriber_${version}_amd64.deb';
+
 class UpdateInfo {
   final String version;
-  final String githubUrl; // fallback download URL
+  final String githubUrl; // fallback download URL (AppImage or .deb)
   final String body;
   UpdateInfo({required this.version, required this.githubUrl, this.body = ''});
 
-  /// Primary: R2 CDN. Fallback: GitHub Releases.
-  String get cdnUrl => '$_cdnBase/$_appImageName';
+  /// CDN URL based on install type
+  String get cdnUrl {
+    if (installType == 'deb') {
+      return '$_cdnBase/${_debAssetName(version)}';
+    }
+    return '$_cdnBase/$_appImageName';
+  }
 }
 
 /// Global notifier so any widget can react to available updates.
@@ -46,12 +60,17 @@ Future<UpdateInfo?> checkForUpdate() async {
     final tagName = (data['tag_name'] as String? ?? '').replaceFirst('v', '');
     if (tagName.isEmpty || !_isNewer(tagName, appVersion)) return null;
 
-    // Find AppImage asset URL (fallback)
+    // Find the right asset based on install type
     final assets = data['assets'] as List<dynamic>? ?? [];
     String? githubUrl;
+    final wantDeb = installType == 'deb';
     for (final asset in assets) {
       final name = asset['name'] as String? ?? '';
-      if (name.contains('AppImage') && name.contains('x86_64')) {
+      if (wantDeb && name.endsWith('.deb')) {
+        githubUrl = asset['browser_download_url'] as String?;
+        break;
+      }
+      if (!wantDeb && name.contains('AppImage') && name.contains('x86_64')) {
         githubUrl = asset['browser_download_url'] as String?;
         break;
       }
@@ -71,12 +90,8 @@ Future<UpdateInfo?> checkForUpdate() async {
 bool _isNewer(String remote, String local) {
   final r = remote.split('.').map((s) => int.tryParse(s) ?? 0).toList();
   final l = local.split('.').map((s) => int.tryParse(s) ?? 0).toList();
-  while (r.length < 3) {
-    r.add(0);
-  }
-  while (l.length < 3) {
-    l.add(0);
-  }
+  while (r.length < 3) r.add(0);
+  while (l.length < 3) l.add(0);
   for (var i = 0; i < 3; i++) {
     if (r[i] > l[i]) return true;
     if (r[i] < l[i]) return false;
@@ -84,20 +99,29 @@ bool _isNewer(String remote, String local) {
   return false;
 }
 
-/// Download new AppImage and replace current one, then restart.
-/// Tries R2 CDN first, falls back to GitHub Releases.
+/// Download and install update. Routes to .deb or AppImage path.
 Future<void> performUpdate(
   UpdateInfo info,
   void Function(double progress, String status) onProgress,
 ) async {
-  final appImagePath = Platform.environment['APPIMAGE'];
-  if (appImagePath == null || appImagePath.isEmpty) {
-    throw Exception('Not running as AppImage');
+  if (installType == 'deb') {
+    await _performDebUpdate(info, onProgress);
+  } else {
+    await _performAppImageUpdate(info, onProgress);
   }
+}
 
-  final tmpPath = '$appImagePath.new';
+// ── .deb update path ──
 
-  // Try R2 CDN first, fallback to GitHub
+Future<void> _performDebUpdate(
+  UpdateInfo info,
+  void Function(double progress, String status) onProgress,
+) async {
+  final home = Platform.environment['HOME'] ?? '/tmp';
+  final debName = _debAssetName(info.version);
+  final tmpPath = '/tmp/$debName';
+
+  // Download .deb
   final urls = [info.cdnUrl, if (info.githubUrl.isNotEmpty) info.githubUrl];
   String? lastError;
 
@@ -110,11 +134,90 @@ Future<void> performUpdate(
       await _downloadFile(url, tmpPath, info.version, source, onProgress);
       stderr.writeln('[UPDATER] Download from $source succeeded');
       lastError = null;
-      break; // success
+      break;
     } catch (e) {
       stderr.writeln('[UPDATER] $source failed: $e');
       lastError = '$source: $e';
-      // Clean up failed download
+      try {
+        File(tmpPath).deleteSync();
+      } catch (_) {}
+    }
+  }
+
+  if (lastError != null) throw Exception(lastError);
+
+  onProgress(1.0, 'Installing (password required)...');
+  stderr.writeln('[UPDATER] Installing .deb via pkexec dpkg -i');
+
+  // Install via pkexec (shows system password dialog)
+  final result = await Process.run('pkexec', ['dpkg', '-i', tmpPath]);
+  if (result.exitCode != 0) {
+    // Clean up
+    try {
+      File(tmpPath).deleteSync();
+    } catch (_) {}
+    final err = (result.stderr as String).trim();
+    if (err.contains('dismissed') || err.contains('Not authorized')) {
+      throw Exception('Installation cancelled by user');
+    }
+    throw Exception('dpkg failed (exit ${result.exitCode}): $err');
+  }
+
+  // Clean up downloaded .deb
+  try {
+    File(tmpPath).deleteSync();
+  } catch (_) {}
+
+  // Remove lock/pid files for clean restart
+  try {
+    File('$home/.config/talkye/app.pid').deleteSync();
+  } catch (_) {}
+  try {
+    File('$home/.config/talkye/app.lock').deleteSync();
+  } catch (_) {}
+
+  onProgress(1.0, 'Restarting...');
+  stderr.writeln('[UPDATER] .deb installed, restarting');
+
+  // Kill sidecar, then restart — no FUSE issues with .deb
+  try {
+    await Process.run('pkill', ['-f', 'uvicorn.*server:app.*8179']);
+  } catch (_) {}
+
+  // Launch new version and exit
+  await Process.start('talkye-scriber', [], mode: ProcessStartMode.detached);
+  await Future.delayed(const Duration(milliseconds: 300));
+  exit(0);
+}
+
+// ── AppImage update path (existing logic) ──
+
+Future<void> _performAppImageUpdate(
+  UpdateInfo info,
+  void Function(double progress, String status) onProgress,
+) async {
+  final appImagePath = Platform.environment['APPIMAGE'];
+  if (appImagePath == null || appImagePath.isEmpty) {
+    throw Exception('Not running as AppImage');
+  }
+
+  final tmpPath = '$appImagePath.new';
+  final urls = [info.cdnUrl, if (info.githubUrl.isNotEmpty) info.githubUrl];
+  String? lastError;
+
+  for (final url in urls) {
+    final source = url.contains('cdn.talkye') ? 'CDN' : 'GitHub';
+    stderr.writeln('[UPDATER] Trying $source: $url');
+    onProgress(0, 'Downloading v${info.version} ($source)...');
+
+    try {
+      await _downloadFile(url, tmpPath, info.version, source, onProgress);
+      stderr.writeln('[UPDATER] Download from $source succeeded');
+      lastError = null;
+      break;
+    } catch (e) {
+      stderr.writeln('[UPDATER] $source failed: $e');
+      lastError = '$source: $e';
       try {
         File(tmpPath).deleteSync();
       } catch (_) {}
@@ -124,13 +227,9 @@ Future<void> performUpdate(
   if (lastError != null) throw Exception(lastError);
 
   onProgress(1.0, 'Installing...');
-
-  // Make executable
   await Process.run('chmod', ['+x', tmpPath]);
-  // Replace current AppImage
   File(tmpPath).renameSync(appImagePath);
 
-  // Remove PID/lock files so the new instance starts clean
   final home = Platform.environment['HOME'] ?? '/tmp';
   try {
     File('$home/.config/talkye/app.pid').deleteSync();
@@ -139,8 +238,7 @@ Future<void> performUpdate(
     File('$home/.config/talkye/app.lock').deleteSync();
   } catch (_) {}
 
-  // Restart: use a helper script that waits for our PID to die (FUSE unmount),
-  // then launches the new AppImage in a new session.
+  // Restart via helper script (waits for FUSE unmount)
   final restartScript = '$home/.config/talkye/restart.sh';
   File(restartScript).writeAsStringSync(
     '#!/bin/bash\n'
@@ -169,6 +267,8 @@ Future<void> performUpdate(
   exit(0);
 }
 
+// ── Shared download helper ──
+
 Future<void> _downloadFile(
   String url,
   String destPath,
@@ -176,18 +276,17 @@ Future<void> _downloadFile(
   String source,
   void Function(double progress, String status) onProgress,
 ) async {
-  // Use curl for fast downloads — Dart HttpClient is too slow for large files
   final process = await Process.start('curl', [
-    '-fSL', // fail on error, show error, follow redirects
-    '--output', destPath,
-    '--write-out', '%{size_download}\n',
-    '-#', // progress bar to stderr
+    '-fSL',
+    '--output',
+    destPath,
+    '--write-out',
+    '%{size_download}\n',
+    '-#',
     url,
   ]);
 
-  // Parse curl progress from stderr (# style: percentage)
   int? totalBytes;
-  // First, get content-length via HEAD request
   try {
     final head = await Process.run('curl', ['-sI', url]);
     final match = RegExp(
@@ -197,7 +296,6 @@ Future<void> _downloadFile(
     if (match != null) totalBytes = int.tryParse(match.group(1)!);
   } catch (_) {}
 
-  // Monitor file size growth for progress
   final destFile = File(destPath);
   Timer? progressTimer;
   progressTimer = Timer.periodic(const Duration(milliseconds: 300), (_) {
@@ -216,7 +314,6 @@ Future<void> _downloadFile(
     } catch (_) {}
   });
 
-  // Drain stdout/stderr so process doesn't block
   process.stdout.drain<void>();
   process.stderr.drain<void>();
 

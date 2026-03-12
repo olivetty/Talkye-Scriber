@@ -35,3 +35,7 @@ whisper.cpp/
 .appimage-build/
 TalkyeScriber-*.AppImage
 squashfs-root/
+
+# Deb build
+.deb-build/
+talkye-scriber_*.deb
