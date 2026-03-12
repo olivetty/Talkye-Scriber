@@ -51,6 +51,16 @@ elif [ -f "$SCRIPT_DIR/app/assets/talkye-meet.png" ]; then
 fi
 echo "  ✓ Flutter bundle copied"
 
+# Verify the compiled version matches version.dart
+EXPECTED_VERSION=$(grep -oP "appVersion = '\K[^']+" "$SCRIPT_DIR/app/lib/version.dart")
+COMPILED_VERSION=$(strings "$APPDIR/usr/bin/lib/libapp.so" 2>/dev/null | grep -oP '^\d+\.\d+\.\d+$' | head -1)
+if [ "$EXPECTED_VERSION" != "$COMPILED_VERSION" ]; then
+  echo "  ERROR: Version mismatch! version.dart=$EXPECTED_VERSION but libapp.so=$COMPILED_VERSION"
+  echo "  This means the AppDir was not cleaned properly. Delete .appimage-build/ and retry."
+  exit 1
+fi
+echo "  ✓ Version verified: $COMPILED_VERSION"
+
 # ── Step 4: Copy sidecar + whisper + sox ──
 echo "[4/7] Copying sidecar, whisper-cli, sox..."
 # Sidecar source
