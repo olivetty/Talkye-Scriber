@@ -7,6 +7,12 @@ description: |
   in any application. Powered by whisper.cpp for offline speech
   recognition with support for 30+ languages.
 
+title: Talkye Scriber
+license: MIT
+contact: contact@talkye.com
+issues: https://github.com/olivetty/Talkye-Scriber/issues
+source-code: https://github.com/olivetty/Talkye-Scriber
+website: https://github.com/olivetty/Talkye-Scriber
 grade: stable
 confinement: strict
 base: core22
@@ -29,7 +35,6 @@ apps:
       - audio-record
       - network
       - home
-      - input
     environment:
       LD_LIBRARY_PATH: $SNAP/opt/talkye-scriber/bin/lib:$SNAP/opt/talkye-scriber/sox/lib:$LD_LIBRARY_PATH
       TALKYE_WHISPER_BIN: $SNAP/opt/talkye-scriber/whisper/whisper-cli
@@ -63,16 +68,23 @@ parts:
     source-tag: '0.13'
     build-packages:
       - libxmu-dev
+    stage-packages:
+      - libxmu6
 
   talkye-scriber:
     plugin: dump
     source: https://github.com/olivetty/Talkye-Scriber/releases/download/v0.6.4/talkye-scriber_0.6.4_amd64.deb
     source-type: deb
-    organize:
-      opt/talkye-scriber: opt/talkye-scriber
-      usr/bin/talkye-scriber: bin/talkye-scriber
-      usr/share: share
-    stage-packages:
-      - libgtk-3-0
-      - libblkid1
-      - liblzma5
+    override-stage: |
+      # Only stage opt/ and usr/share/, skip usr/bin symlink that causes issues
+      cp -a $CRAFT_PART_INSTALL/opt $CRAFT_STAGE/
+      cp -a $CRAFT_PART_INSTALL/usr/share $CRAFT_STAGE/usr/ 2>/dev/null || true
+    override-prime: |
+      # Copy staged files
+      cp -a $CRAFT_STAGE/opt $CRAFT_PRIME/ 2>/dev/null || true
+      mkdir -p $CRAFT_PRIME/usr
+      cp -a $CRAFT_STAGE/usr/share $CRAFT_PRIME/usr/ 2>/dev/null || true
+      # Create launcher script
+      mkdir -p $CRAFT_PRIME/bin
+      printf '#!/bin/bash\nexec "$SNAP/opt/talkye-scriber/bin/talkye_app" "$@"\n' > $CRAFT_PRIME/bin/talkye-scriber
+      chmod +x $CRAFT_PRIME/bin/talkye-scriber
