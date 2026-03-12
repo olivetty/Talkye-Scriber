@@ -28,6 +28,8 @@ echo "  ✓ Flutter build complete"
 
 # ── Step 2: Clean previous build ──
 echo "[2/7] Preparing AppDir..."
+# Force-remove old AppDir (Python standalone has read-only files that block rm)
+chmod -R u+w "$APPDIR" 2>/dev/null || true
 rm -rf "$APPDIR"
 mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/lib" "$APPDIR/usr/data"
 mkdir -p "$APPDIR/usr/sidecar" "$APPDIR/usr/whisper" "$APPDIR/usr/python"
