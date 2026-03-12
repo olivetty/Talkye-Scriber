@@ -1,0 +1,78 @@
+name: talkye-scriber
+version: '0.6.4'
+summary: Voice-to-text dictation for your desktop
+description: |
+  Hold a key, speak, release — text appears at your cursor.
+  Talkye Scriber is a system-wide voice dictation tool that works
+  in any application. Powered by whisper.cpp for offline speech
+  recognition with support for 30+ languages.
+
+grade: stable
+confinement: strict
+base: core22
+compression: lzo
+
+architectures:
+  - build-on: amd64
+
+apps:
+  talkye-scriber:
+    command: bin/talkye-scriber
+    extensions: [gnome]
+    plugs:
+      - desktop
+      - desktop-legacy
+      - wayland
+      - x11
+      - opengl
+      - audio-playback
+      - audio-record
+      - network
+      - home
+      - input
+    environment:
+      LD_LIBRARY_PATH: $SNAP/opt/talkye-scriber/bin/lib:$SNAP/opt/talkye-scriber/sox/lib:$LD_LIBRARY_PATH
+      TALKYE_WHISPER_BIN: $SNAP/opt/talkye-scriber/whisper/whisper-cli
+      TALKYE_SIDECAR_DIR: $SNAP/opt/talkye-scriber/sidecar
+      TALKYE_PYTHON: $SNAP/opt/talkye-scriber/python/bin/python3
+      TALKYE_SOX: $SNAP/opt/talkye-scriber/sox/sox
+      TALKYE_INSTALL_TYPE: snap
+
+layout:
+  /opt/talkye-scriber:
+    bind: $SNAP/opt/talkye-scriber
+
+parts:
+  xdotool:
+    plugin: make
+    source: https://github.com/jordansissel/xdotool.git
+    source-tag: v3.20211022.1
+    make-parameters:
+      - PREFIX=/usr
+    build-packages:
+      - libxtst-dev
+      - libxinerama-dev
+      - libxkbcommon-dev
+    stage-packages:
+      - libxtst6
+      - libxinerama1
+
+  xclip:
+    plugin: autotools
+    source: https://github.com/astrand/xclip.git
+    source-tag: '0.13'
+    build-packages:
+      - libxmu-dev
+
+  talkye-scriber:
+    plugin: dump
+    source: https://github.com/olivetty/Talkye-Scriber/releases/download/v0.6.4/talkye-scriber_0.6.4_amd64.deb
+    source-type: deb
+    organize:
+      opt/talkye-scriber: opt/talkye-scriber
+      usr/bin/talkye-scriber: bin/talkye-scriber
+      usr/share: share
+    stage-packages:
+      - libgtk-3-0
+      - libblkid1
+      - liblzma5

@@ -11,9 +11,10 @@ const _repoName = 'Talkye-Scriber';
 const _cdnBase = 'https://cdn.talkye.com';
 const _appImageName = 'TalkyeScriber-x86_64.AppImage';
 
-/// Detect install type: "deb", "appimage", or "dev"
+/// Detect install type: "deb", "appimage", "flatpak", "snap", or "dev"
 String get installType {
-  if (Platform.environment['TALKYE_INSTALL_TYPE'] == 'deb') return 'deb';
+  final t = Platform.environment['TALKYE_INSTALL_TYPE'];
+  if (t != null) return t;
   if (Platform.environment['APPIMAGE'] != null) return 'appimage';
   return 'dev';
 }
@@ -39,7 +40,9 @@ class UpdateInfo {
 final updateAvailable = ValueNotifier<UpdateInfo?>(null);
 
 /// Check GitHub Releases for a newer version. Returns null if up to date.
+/// Flatpak and Snap updates are handled by their respective stores.
 Future<UpdateInfo?> checkForUpdate() async {
+  if (installType == 'flatpak' || installType == 'snap') return null;
   try {
     final client = HttpClient();
     client.connectionTimeout = const Duration(seconds: 5);
