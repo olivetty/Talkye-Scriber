@@ -10,6 +10,8 @@ Voice-to-text dictation for Linux. Hold a key, speak, release — text appears a
 
 [![Get it from the Snap Store](https://snapcraft.io/static/images/badges/en/snap-store-black.svg)](https://snapcraft.io/talkye-scriber)
 
+**[View on Snap Store](https://snapcraft.io/talkye-scriber)**
+
 ```bash
 sudo snap install talkye-scriber
 ```
