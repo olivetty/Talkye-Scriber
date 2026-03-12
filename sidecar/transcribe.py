@@ -138,19 +138,16 @@ _HALLUCINATIONS = {
 # ══════════════════════════════════════════════════════════════════════════════
 
 # Layer 1: Audio energy gate — skip transcription if audio is near-silent
-_RMS_SILENCE_THRESHOLD = 250   # 16-bit PCM; typical speech RMS is 1000-8000
-_SPEECH_FRAME_THRESHOLD = 400  # per-chunk threshold for "active speech"
-_MIN_SPEECH_RATIO = 0.08       # at least 8% of chunks must have speech energy
+_RMS_SILENCE_THRESHOLD = 80    # 16-bit PCM; lowered to avoid blocking real speech
+_SPEECH_FRAME_THRESHOLD = 150  # per-chunk threshold for "active speech"
+_MIN_SPEECH_RATIO = 0.03       # at least 3% of chunks must have speech energy
 
 
 def _audio_has_speech(wav_path: str) -> bool:
     """Check if WAV file contains real speech using energy analysis.
 
-    Two checks:
-    1. Overall RMS must be above silence threshold
-    2. At least MIN_SPEECH_RATIO of 20ms chunks must have speech-level energy
-       (this catches the case where someone holds the key in silence — ambient
-       noise may have moderate RMS but no speech-shaped energy bursts)
+    Conservative gate — only filters near-total silence.
+    Better to let a few hallucinations through than block real speech.
     """
     try:
         with wave.open(wav_path, "rb") as wf:
@@ -168,33 +165,12 @@ def _audio_has_speech(wav_path: str) -> bool:
             rms = (sum(s * s for s in samples) / n_samples) ** 0.5
             peak = max(abs(s) for s in samples)
 
-            # Chunk-based speech detection (20ms chunks)
-            chunk_size = max(1, sample_rate // 50)  # 20ms at sample_rate
-            n_chunks = n_samples // chunk_size
-            speech_chunks = 0
-            for i in range(n_chunks):
-                start = i * chunk_size
-                end = start + chunk_size
-                chunk = samples[start:end]
-                chunk_rms = (sum(s * s for s in chunk) / len(chunk)) ** 0.5
-                if chunk_rms > _SPEECH_FRAME_THRESHOLD:
-                    speech_chunks += 1
-
-            speech_ratio = speech_chunks / max(n_chunks, 1)
             duration = n_samples / max(sample_rate, 1)
+            logger.info("Audio energy: RMS=%.0f, peak=%d, duration=%.1fs", rms, peak, duration)
 
-            logger.debug("Audio energy: RMS=%.0f, peak=%d, speech_chunks=%d/%d (%.0f%%), duration=%.1fs",
-                         rms, peak, speech_chunks, n_chunks, speech_ratio * 100, duration)
-
-            # Gate 1: Overall too quiet
-            if rms < _RMS_SILENCE_THRESHOLD and peak < _RMS_SILENCE_THRESHOLD * 3:
-                logger.info("Audio too quiet (RMS=%.0f, peak=%d), skipping", rms, peak)
-                return False
-
-            # Gate 2: Not enough speech-shaped energy bursts
-            if n_chunks > 5 and speech_ratio < _MIN_SPEECH_RATIO:
-                logger.info("No speech detected (%.0f%% active chunks, RMS=%.0f), skipping",
-                            speech_ratio * 100, rms)
+            # Only filter near-total silence (very conservative)
+            if rms < _RMS_SILENCE_THRESHOLD and peak < 300:
+                logger.info("Audio near-silent (RMS=%.0f, peak=%d), skipping", rms, peak)
                 return False
 
             return True
