@@ -60,6 +60,7 @@ class _DictateScreenState extends State<DictateScreen> {
     super.initState();
     _triggerKey = widget.settings.triggerKey;
     _soundTheme = widget.settings.soundTheme;
+    _language = widget.settings.language;
     _groqCtrl = TextEditingController(text: widget.settings.groqApiKey);
     _poll();
     _pollTimer = Timer.periodic(const Duration(seconds: 2), (_) => _poll());
@@ -106,6 +107,7 @@ class _DictateScreenState extends State<DictateScreen> {
         await _post('/dictate/config', {
           'trigger_key': widget.settings.triggerKey,
           'sound_theme': widget.settings.soundTheme,
+          'language': widget.settings.language,
           'dictate_translate': widget.settings.dictateTranslate,
           'dictate_grammar': widget.settings.dictateGrammar,
           if (widget.settings.groqApiKey.isNotEmpty)
@@ -144,6 +146,9 @@ class _DictateScreenState extends State<DictateScreen> {
     }
     if (cfg.containsKey('sound_theme')) {
       widget.settings.soundTheme = cfg['sound_theme'] as String;
+    }
+    if (cfg.containsKey('language')) {
+      widget.settings.language = cfg['language'] as String;
     }
     widget.settings.save();
     _poll();

@@ -12,6 +12,7 @@ import 'status_bar.dart';
 import 'screens/dictate_screen.dart';
 import 'screens/setup_screen.dart';
 import 'desktop_integration.dart';
+import 'updater.dart';
 
 Future<void> main() async {
   // Single-instance guard: lock file + PID verification
@@ -157,6 +158,7 @@ class TalkyeApp extends StatelessWidget {
 class AppSettings {
   String triggerKey; // evdev name, e.g. KEY_RIGHTCTRL
   String soundTheme; // subtle | alex | luna | silent
+  String language; // auto | en | ro | etc.
   bool dictateTranslate; // translate to English via LLM
   bool dictateGrammar; // grammar/cleanup fix via LLM
   String groqApiKey; // Groq API key for LLM post-processing
@@ -164,6 +166,7 @@ class AppSettings {
   AppSettings({
     this.triggerKey = 'KEY_RIGHTCTRL',
     this.soundTheme = 'subtle',
+    this.language = 'auto',
     this.dictateTranslate = false,
     this.dictateGrammar = false,
     this.groqApiKey = '',
@@ -182,6 +185,7 @@ class AppSettings {
         return AppSettings(
           triggerKey: map['triggerKey'] as String? ?? 'KEY_RIGHTCTRL',
           soundTheme: map['soundTheme'] as String? ?? 'subtle',
+          language: map['language'] as String? ?? 'auto',
           dictateTranslate: map['dictateTranslate'] as bool? ?? false,
           dictateGrammar: map['dictateGrammar'] as bool? ?? false,
           groqApiKey: map['groqApiKey'] as String? ?? '',
@@ -201,6 +205,7 @@ class AppSettings {
         jsonEncode({
           'triggerKey': triggerKey,
           'soundTheme': soundTheme,
+          'language': language,
           'dictateTranslate': dictateTranslate,
           'dictateGrammar': dictateGrammar,
           'groqApiKey': groqApiKey,
@@ -496,16 +501,18 @@ class _AppShellState extends State<AppShell> with WindowListener {
       } catch (_) {}
     }
 
-    // Use bundled Python if available (TALKYE_PYTHON set by AppRun)
+    // Use bundled Python if available (TALKYE_PYTHON set by AppRun or deb launcher)
     final bundledPython = Platform.environment['TALKYE_PYTHON'];
-    final isAppImage = Platform.environment['APPIMAGE'] != null;
+    final isPackaged =
+        Platform.environment['APPIMAGE'] != null ||
+        Platform.environment['TALKYE_INSTALL_TYPE'] != null;
 
     String uvicornBin;
     List<String> uvicornArgs;
 
-    if (isAppImage && bundledPython != null) {
-      // AppImage: deps are pre-installed in bundled Python, no venv needed
-      LogBuffer.add('SIDECAR: AppImage mode, using bundled Python');
+    if (isPackaged && bundledPython != null) {
+      // Packaged (AppImage or .deb): deps are pre-installed in bundled Python
+      LogBuffer.add('SIDECAR: packaged mode, using bundled Python');
       uvicornBin = bundledPython;
       uvicornArgs = [
         '-m',
@@ -587,12 +594,18 @@ class _AppShellState extends State<AppShell> with WindowListener {
     }
   }
 
-  void _stopSidecar() {
+  Future<void> _stopSidecar() async {
     if (_sidecar != null) {
       LogBuffer.add('SIDECAR: stopping (PID ${_sidecar!.pid})');
       _sidecar!.kill(ProcessSignal.sigterm);
       _sidecar = null;
     }
+    // Kill the entire process tree: uvicorn + evdev listener + any children
+    try {
+      Process.runSync('pkill', ['-9', '-f', 'uvicorn.*server:app.*8179']);
+    } catch (_) {}
+    // Small wait to let processes die
+    await Future.delayed(const Duration(milliseconds: 300));
   }
 
   Future<void> restartSidecar() async {
@@ -671,16 +684,37 @@ class _AppShellState extends State<AppShell> with WindowListener {
           if (await windowManager.isVisible()) {
             await windowManager.hide();
           } else {
+            await windowManager.setAlwaysOnTop(true);
             await windowManager.show();
             await windowManager.focus();
+            // Release always-on-top after a short delay so it doesn't stay pinned
+            Future.delayed(const Duration(milliseconds: 500), () async {
+              await windowManager.setAlwaysOnTop(false);
+            });
           }
+        },
+      ),
+      MenuItemLabel(
+        label: 'Check for Updates',
+        onClicked: (_) async {
+          final info = await checkForUpdate();
+          if (info != null) {
+            updateAvailable.value = info;
+          }
+          // Show the window so user can see the update banner / status bar
+          await windowManager.setAlwaysOnTop(true);
+          await windowManager.show();
+          await windowManager.focus();
+          Future.delayed(const Duration(milliseconds: 500), () async {
+            await windowManager.setAlwaysOnTop(false);
+          });
         },
       ),
       MenuSeparator(),
       MenuItemLabel(
         label: 'Quit',
         onClicked: (_) async {
-          _stopSidecar();
+          await _stopSidecar();
           try {
             _lockHandle?.unlockSync();
             _lockHandle?.closeSync();
@@ -693,6 +727,7 @@ class _AppShellState extends State<AppShell> with WindowListener {
           } catch (_) {}
           await windowManager.setPreventClose(false);
           await windowManager.close();
+          exit(0);
         },
       ),
     ]);
@@ -702,8 +737,12 @@ class _AppShellState extends State<AppShell> with WindowListener {
         if (await windowManager.isVisible()) {
           await windowManager.hide();
         } else {
+          await windowManager.setAlwaysOnTop(true);
           await windowManager.show();
           await windowManager.focus();
+          Future.delayed(const Duration(milliseconds: 500), () async {
+            await windowManager.setAlwaysOnTop(false);
+          });
         }
       } else if (eventName == kSystemTrayEventRightClick) {
         await _tray.popUpContextMenu();
@@ -867,7 +906,14 @@ class _AppShellState extends State<AppShell> with WindowListener {
 
   @override
   void dispose() {
-    _stopSidecar();
+    // Sync kill — best effort (async _stopSidecar already called from Quit)
+    if (_sidecar != null) {
+      _sidecar!.kill(ProcessSignal.sigkill);
+      _sidecar = null;
+    }
+    try {
+      Process.runSync('pkill', ['-9', '-f', 'uvicorn.*server:app.*8179']);
+    } catch (_) {}
     try {
       _lockHandle?.unlockSync();
       _lockHandle?.closeSync();

@@ -75,7 +75,7 @@ core = DictateCore(
 
 def load_flutter_settings():
     """Read ~/.config/talkye/settings.json to pick up Flutter-saved settings."""
-    global TRIGGER_KEY, SOUND_THEME, STT_BACKEND, DICTATE_TRANSLATE, DICTATE_GRAMMAR
+    global TRIGGER_KEY, SOUND_THEME, STT_BACKEND, DICTATE_TRANSLATE, DICTATE_GRAMMAR, LANGUAGE
     import json
     import logging
     logger = logging.getLogger(__name__)
@@ -89,6 +89,9 @@ def load_flutter_settings():
             if "triggerKey" in cfg:
                 TRIGGER_KEY = cfg["triggerKey"]
                 logger.info("Settings: trigger_key=%s", TRIGGER_KEY)
+            if "language" in cfg:
+                LANGUAGE = cfg["language"]
+                logger.info("Settings: language=%s", LANGUAGE)
             if "soundTheme" in cfg:
                 SOUND_THEME = cfg["soundTheme"]
                 logger.info("Settings: sound_theme=%s", SOUND_THEME)
