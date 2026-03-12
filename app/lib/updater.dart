@@ -138,6 +138,10 @@ Future<void> performUpdate(
     final home = Platform.environment['HOME'] ?? '/tmp';
     File('$home/.config/talkye/app.pid').deleteSync();
   } catch (_) {}
+  try {
+    final home = Platform.environment['HOME'] ?? '/tmp';
+    File('$home/.config/talkye/app.lock').deleteSync();
+  } catch (_) {}
 
   // Restart — await the spawn, then give OS time before exiting
   await Process.start(appImagePath, [], mode: ProcessStartMode.detached);

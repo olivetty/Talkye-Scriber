@@ -14,8 +14,9 @@ import 'screens/setup_screen.dart';
 import 'desktop_integration.dart';
 
 Future<void> main() async {
-  // Single-instance guard: if already running, activate existing window and exit
-  if (await _activateExistingInstance()) exit(0);
+  // Single-instance guard: lock file + PID verification
+  final lockResult = await _acquireInstanceLock();
+  if (!lockResult) exit(0);
 
   WidgetsFlutterBinding.ensureInitialized();
   await windowManager.ensureInitialized();
@@ -47,10 +48,65 @@ File get _pidFile {
   return File('$home/.config/talkye/app.pid');
 }
 
+File get _lockFile {
+  final home = Platform.environment['HOME'] ?? '/tmp';
+  return File('$home/.config/talkye/app.lock');
+}
+
+RandomAccessFile? _lockHandle;
+
 void _writePidFile() {
   try {
     _pidFile.parent.createSync(recursive: true);
     _pidFile.writeAsStringSync('$pid');
+  } catch (_) {}
+}
+
+/// Acquire a file lock to guarantee single-instance.
+/// Returns true if we got the lock (we're the only instance).
+/// Returns false if another instance is running (we should exit).
+Future<bool> _acquireInstanceLock() async {
+  try {
+    _lockFile.parent.createSync(recursive: true);
+
+    // Try to open and exclusively lock the file
+    _lockHandle = _lockFile.openSync(mode: FileMode.write);
+    try {
+      _lockHandle!.lockSync(FileLock.exclusive);
+    } on FileSystemException {
+      // Lock held by another process — it's alive
+      _lockHandle!.closeSync();
+      _lockHandle = null;
+
+      // Try to activate the existing window
+      await _activateExistingWindow();
+      return false;
+    }
+
+    // We got the lock — write our PID
+    _lockHandle!.writeStringSync('$pid');
+    _lockHandle!.flushSync();
+    // Keep _lockHandle open (lock is held as long as the file is open)
+    // Also write PID file for backward compat
+    _writePidFile();
+    return true;
+  } catch (e) {
+    // If locking fails entirely, fall back to PID-based check
+    stderr.writeln('WARNING: Lock file failed ($e), falling back to PID check');
+    if (await _activateExistingInstance()) return false;
+    _writePidFile();
+    return true;
+  }
+}
+
+Future<void> _activateExistingWindow() async {
+  try {
+    await Process.run('xdotool', [
+      'search',
+      '--name',
+      'Talkye Scriber',
+      'windowactivate',
+    ]);
   } catch (_) {}
 }
 
@@ -60,17 +116,23 @@ Future<bool> _activateExistingInstance() async {
     final existingPid = int.tryParse(_pidFile.readAsStringSync().trim());
     if (existingPid == null || existingPid == pid) return false;
 
-    // Check if process is alive
+    // Check if process is alive AND is actually Talkye
     final procDir = Directory('/proc/$existingPid');
     if (!procDir.existsSync()) return false;
 
-    // It's alive — bring its window to front
-    await Process.run('xdotool', [
-      'search',
-      '--name',
-      'Talkye Scriber',
-      'windowactivate',
-    ]);
+    // Verify it's our app, not a recycled PID
+    try {
+      final cmdline = File('/proc/$existingPid/cmdline').readAsStringSync();
+      if (!cmdline.toLowerCase().contains('talkye') &&
+          !cmdline.toLowerCase().contains('flutter')) {
+        // PID was recycled — not our app
+        return false;
+      }
+    } catch (_) {
+      // Can't read cmdline — might be permission issue, assume it's ours
+    }
+
+    await _activateExistingWindow();
     return true;
   } catch (_) {
     return false;
@@ -620,7 +682,14 @@ class _AppShellState extends State<AppShell> with WindowListener {
         onClicked: (_) async {
           _stopSidecar();
           try {
+            _lockHandle?.unlockSync();
+            _lockHandle?.closeSync();
+          } catch (_) {}
+          try {
             _pidFile.deleteSync();
+          } catch (_) {}
+          try {
+            _lockFile.deleteSync();
           } catch (_) {}
           await windowManager.setPreventClose(false);
           await windowManager.close();
@@ -800,7 +869,14 @@ class _AppShellState extends State<AppShell> with WindowListener {
   void dispose() {
     _stopSidecar();
     try {
+      _lockHandle?.unlockSync();
+      _lockHandle?.closeSync();
+    } catch (_) {}
+    try {
       _pidFile.deleteSync();
+    } catch (_) {}
+    try {
+      _lockFile.deleteSync();
     } catch (_) {}
     windowManager.removeListener(this);
     super.dispose();
